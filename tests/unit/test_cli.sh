@@ -385,3 +385,13 @@ test_doctor_fails_when_network_not_internal() {
   assert_nonzero "$STATUS"
   assert_contains "$OUT" "internal"
 }
+
+test_doctor_warns_on_git_auto_repository_detection() {
+  healthy_host
+  linux_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  run_cli doctor
+  assert_contains "$OUT" "git.autoRepositoryDetection"
+  linux_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\", \"git.autoRepositoryDetection\": false }"
+  run_cli doctor
+  assert_not_contains "$OUT" "git.autoRepositoryDetection"
+}

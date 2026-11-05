@@ -376,3 +376,106 @@ test_created_readonly_dirs_use_normal_permissions() {
   mode="$(ls -ld "$PROJECT/.vscode" | cut -c1-10)"
   assert_eq "drwxr-xr-x" "$mode"
 }
+
+# --- mount hardening ----------------------------------------------------------
+
+test_mount_option_injection_via_comma_is_refused() {
+  local evil="$PROJECT/q,src=$HOME,dst=/home/claude/leak"
+  mkdir -p "$evil"
+  : >"$evil/.env"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_eq "" "$OUT"
+  assert_file_missing "$FAKE_DOCKER_DIR/run.args" "docker run must not happen"
+  assert_contains "$ERR" "cannot be mounted safely"
+}
+
+test_mount_paths_with_quote_or_newline_are_refused() {
+  mkdir -p "$PROJECT/a\"b" "$PROJECT/c
+d"
+  : >"$PROJECT/a\"b/.env"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  rm -rf "$PROJECT/a\"b"
+  : >"$PROJECT/c
+d/.env"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_file_missing "$FAKE_DOCKER_DIR/run.args"
+}
+
+test_nested_git_directories_are_read_only() {
+  mkdir -p "$PROJECT/sub/.git" "$PROJECT/vendor/acme/pkg/.git" "$PROJECT/wt"
+  echo "gitdir: /elsewhere" >"$PROJECT/wt/.git"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  local a
+  a="$(run_args)"
+  assert_contains "$a" "type=bind,src=$PROJECT/sub/.git,dst=$PROJECT/sub/.git,readonly"
+  assert_contains "$a" "type=bind,src=$PROJECT/vendor/acme/pkg/.git,dst=$PROJECT/vendor/acme/pkg/.git,readonly"
+  assert_contains "$a" "type=bind,src=$PROJECT/wt/.git,dst=$PROJECT/wt/.git,readonly"
+}
+
+test_new_nested_git_triggers_recreate() {
+  run_wrapper --version
+  mkdir -p "$PROJECT/evil/.git"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_contains "$(run_args)" "dst=$PROJECT/evil/.git,readonly"
+}
+
+test_masks_are_found_in_node_modules_and_vendor() {
+  mkdir -p "$PROJECT/node_modules/x" "$PROJECT/vendor/y"
+  : >"$PROJECT/node_modules/x/.env"
+  : >"$PROJECT/vendor/y/.env.prod"
+  run_wrapper --version
+  assert_contains "$(run_args)" "dst=$PROJECT/node_modules/x/.env,readonly"
+  assert_contains "$(run_args)" "dst=$PROJECT/vendor/y/.env.prod,readonly"
+}
+
+test_moved_masked_file_fails_closed() {
+  mkdir -p "$PROJECT/app/config" "$HOME/.config/claude-box/projects"
+  echo 'SECRET' >"$PROJECT/app/config/parameters.php"
+  local name
+  name="claude-box-my-project-$(sha8 "$PROJECT")"
+  echo 'MASK_PRESETS="prestashop"' >"$HOME/.config/claude-box/projects/$name.conf"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  # Inside the container the parent of a mountpoint can be renamed.
+  mv "$PROJECT/app/config" "$PROJECT/app/cfg"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "app/config/parameters.php"
+  assert_eq "" "$OUT"
+}
+
+test_recreate_by_user_accepts_removed_masks() {
+  : >"$PROJECT/.env"
+  run_wrapper --version
+  rm "$PROJECT/.env"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  run_cli up --recreate
+  assert_status 0 "$STATUS"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+}
+
+test_moved_masked_file_with_decoy_fails_closed() {
+  mkdir -p "$PROJECT/app/config" "$HOME/.config/claude-box/projects"
+  echo 'SECRET' >"$PROJECT/app/config/parameters.php"
+  local name
+  name="claude-box-my-project-$(sha8 "$PROJECT")"
+  echo 'MASK_PRESETS="prestashop"' >"$HOME/.config/claude-box/projects/$name.conf"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  mv "$PROJECT/app/config" "$PROJECT/app/cfg"
+  mkdir -p "$PROJECT/app/config"
+  echo 'decoy' >"$PROJECT/app/config/parameters.php"
+  # The running container still masks the moved file (the mount moved with
+  # its parent); the danger is the next creation, e.g. after `docker rm`.
+  rm -f "$FAKE_DOCKER_DIR/state"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "app/config/parameters.php"
+}

@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034 # ERR is set for symmetry with run_wrapper/run_cli
 # Unit tests for install.sh.
 
 run_install() {

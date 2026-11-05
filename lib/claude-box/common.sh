@@ -522,11 +522,15 @@ cb_readonly_entries() {
   printf '%s\n' "${res# }"
 }
 
-# Print absolute paths of existing files/dirs matching the mask patterns.
-# A pattern containing "/" is anchored at the project root (shell glob);
-# a pattern without "/" matches a name at any depth, skipping .git,
-# node_modules and vendor. Symlinks are resolved; targets outside the project
-# are skipped because they are not visible in the container anyway.
+CB_NL='
+'
+CB_CR="$(printf '\r')"
+CB_TAB="$(printf '\t')"
+
+# Print NUL-terminated absolute paths of existing files/dirs matching the mask
+# patterns. A pattern containing "/" is anchored at the project root (shell
+# glob); a pattern without "/" matches a name at any depth. Nothing is pruned:
+# the container can move files into any directory, so every directory counts.
 cb_find_masks() {
   local dir="$1" pat names="" f
   local -a find_expr
@@ -538,7 +542,7 @@ cb_find_masks() {
         set +f
         for f in "$dir"/$pat; do
           if [ -e "$f" ] || [ -L "$f" ]; then
-            printf '%s\n' "$f"
+            printf '%s\0' "$f"
           fi
         done
         set -f
@@ -554,17 +558,37 @@ cb_find_masks() {
   done
   set +f
   if [ -n "$names" ]; then
-    find "$dir" \( -name .git -o -name node_modules -o -name vendor \) -prune \
-      -o \( "${find_expr[@]}" \) -print 2>/dev/null
+    find "$dir" \( "${find_expr[@]}" \) -print0 2>/dev/null || true
   fi
 }
 
+# Print NUL-terminated paths of every .git (directory or file) below the
+# project root. The IDE and git on the host run hooks and config such as
+# core.fsmonitor from nested repositories too, so they must be read-only.
+cb_find_nested_git() {
+  find "$1" -mindepth 2 -name .git ! -type l -prune -print0 2>/dev/null || true
+}
+
+# Emit one mount spec line. Paths that docker's CSV-parsed --mount syntax (or
+# this line-based list) cannot carry safely are emitted as "bad" so that the
+# caller fails closed; a comma would otherwise let a file name inject mount
+# options such as src=/home/user/.ssh.
+cb_emit_mount() {
+  case "$2" in
+    *,* | *'"'* | *"$CB_NL"* | *"$CB_CR"* | *"$CB_TAB"*)
+      printf 'bad\t%s\n' "$(printf '%s' "$2" | tr '\n\r\t' '???')"
+      ;;
+    *) printf '%s\t%s\n' "$1" "$2" ;;
+  esac
+}
+
 # Print mount specs, one per line: "KIND<TAB>PATH" where KIND is
-# file (mask with empty file), dir (mask with tmpfs) or ro (read-only bind).
+# file (mask with empty file), dir (mask with tmpfs), ro (read-only bind) or
+# bad (a path that cannot be mounted safely).
 # Creates missing read-only directories on the host.
 cb_compute_mounts() {
   local dir="$1" f target e path
-  cb_find_masks "$dir" | sort -u | while IFS= read -r f; do
+  cb_find_masks "$dir" | while IFS= read -r -d '' f; do
     target="$f"
     if [ -L "$f" ]; then
       target="$(cb_resolve_path "$f" 2>/dev/null)" || continue
@@ -575,20 +599,26 @@ cb_compute_mounts() {
       [ -e "$target" ] || continue
     fi
     if [ -d "$target" ]; then
-      printf 'dir\t%s\n' "$target"
+      cb_emit_mount dir "$target"
     else
-      printf 'file\t%s\n' "$target"
+      cb_emit_mount file "$target"
     fi
-  done
+  done | sort -u
   for e in $(cb_readonly_entries); do
     case "$e" in
       /* | *..*) cb_die "read-only entry '$e' must be a path relative to the project" ;;
     esac
     path="$dir/$e"
+    # A symlinked parent directory would make docker bind a host path
+    # outside the project.
+    if ! cb_path_inside "$dir" "$(dirname "$path")"; then
+      cb_log "read-only: parent of $path resolves outside the project; skipped"
+      continue
+    fi
     if [ -L "$path" ]; then
       target="$(cb_resolve_path "$path" 2>/dev/null)" || target=""
       if [ -n "$target" ] && cb_path_inside "$dir" "$target" && [ -e "$target" ]; then
-        printf 'ro\t%s\n' "$target"
+        cb_emit_mount ro "$target"
       else
         cb_log "read-only: $path is a symlink pointing outside the project; it dangles in the container"
       fi
@@ -600,8 +630,68 @@ cb_compute_mounts() {
       mkdir -p "$path" || cb_die "cannot create $path"
       cb_log "created missing read-only directory $path"
     fi
-    printf 'ro\t%s\n' "$path"
+    cb_emit_mount ro "$path"
   done
+  if [ "$CFG_GIT_WRITABLE" != "1" ]; then
+    cb_find_nested_git "$dir" | while IFS= read -r -d '' f; do
+      cb_emit_mount ro "$f"
+    done | sort -u
+  fi
+}
+
+# File listing the paths masked when the container was last created.
+cb_mask_record() {
+  printf '%s/masks/%s.list\n' "$CB_STATE_DIR" "$CB_NAME"
+}
+
+# Inode number of a path, empty if it does not exist (ls -di works on BSD,
+# GNU and busybox; stat does not have portable flags).
+cb_inode() {
+  if [ -e "$1" ]; then
+    # shellcheck disable=SC2012 # ls -di is the portable way to read an inode
+    ls -di "$1" 2>/dev/null | awk '{print $1}'
+  fi
+}
+
+# A path masked last time that no longer exists, or now is a different file,
+# was moved or replaced. From
+# inside the container that is possible by renaming a parent directory, which
+# would unmask the file when the container is recreated. Fail closed unless the
+# user recreates the container explicitly (`up --recreate` sets
+# CB_ACCEPT_MASK_CHANGES=1).
+cb_check_mask_record() {
+  local record p missing=""
+  record="$(cb_mask_record)"
+  [ -f "$record" ] || return 0
+  [ "${CB_ACCEPT_MASK_CHANGES:-0}" != "1" ] || return 0
+  local inode now
+  while IFS="$CB_TAB" read -r inode p; do
+    [ -n "$p" ] || continue
+    now="$(cb_inode "$p")"
+    # A different inode means the original was moved away and something else
+    # put in its place.
+    if [ "$now" != "$inode" ]; then
+      missing="$missing $p"
+    fi
+  done <"$record"
+  if [ -n "$missing" ]; then
+    cb_die "masked path(s) were moved, replaced or deleted:$missing - this can be an attempt from inside the container to escape a mask from inside the container to escape the mask. Check the project; if you moved or deleted them yourself, run 'claude-box up --recreate' in $CB_PROJECT_DIR."
+  fi
+}
+
+cb_write_mask_record() {
+  local record
+  record="$(cb_mask_record)"
+  mkdir -p "$(dirname "$record")"
+  local kind path
+  while IFS="$CB_TAB" read -r kind path; do
+    case "$kind" in
+      file | dir) printf '%s\t%s\n' "$(cb_inode "$path")" "$path" ;;
+    esac
+  done >"$record.tmp" <<CB_END
+$CB_MOUNTS
+CB_END
+  mv "$record.tmp" "$record"
 }
 
 # --------------------------------------------------------------------------
@@ -640,6 +730,7 @@ cb_build_run_args() {
   uid="${uidgid% *}"
   gid="${uidgid#* }"
   mounts="$(cb_compute_mounts "$CB_PROJECT_DIR")" || exit 1
+  CB_MOUNTS="$mounts"
 
   CB_RUN_ARGS=(
     run -d
@@ -677,7 +768,12 @@ cb_build_run_args() {
   fi
   while IFS="$(printf '\t')" read -r kind path; do
     [ -n "$kind" ] || continue
+    case "$path" in
+      "$CB_PROJECT_DIR"/*) ;;
+      *) cb_die "refusing to mount '$path': not inside the project" ;;
+    esac
     case "$kind" in
+      bad) cb_die "'$path' cannot be mounted safely (its name contains a comma, quote, tab or newline); rename or remove it" ;;
       file) CB_RUN_ARGS+=(--mount "type=bind,src=$CB_EMPTY_FILE,dst=$path,readonly") ;;
       dir) CB_RUN_ARGS+=(--mount "type=tmpfs,dst=$path,tmpfs-size=1048576") ;;
       ro) CB_RUN_ARGS+=(--mount "type=bind,src=$path,dst=$path,readonly") ;;
@@ -734,6 +830,7 @@ cb_ensure_container() {
     fi
   fi
   if [ -z "$state" ]; then
+    cb_check_mask_record
     # Insert the config label right after "run -d".
     local -a args
     args=("${CB_RUN_ARGS[@]:0:2}" --label "io.claude-box.config=$hash" "${CB_RUN_ARGS[@]:2}")
@@ -743,6 +840,7 @@ cb_ensure_container() {
       cb_log "docker run failed: $err"
       cb_die "cannot create container $CB_NAME: $err"
     fi
+    cb_write_mask_record
   fi
   cb_unlock
 }

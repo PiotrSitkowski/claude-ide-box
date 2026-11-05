@@ -70,9 +70,12 @@ claude-box installed:
 
 Add this to the USER settings.json of each IDE (Antigravity, VS Code, Cursor).
 Never put it in workspace settings: those live in the project, which Claude can edit.
+The last line stops the IDE from running git in repositories Claude creates in
+the project (git hooks and core.fsmonitor would run on the host).
 
     "claudeCode.claudeProcessWrapper": "$wrapper",
-    "claudeCode.useTerminal": false
+    "claudeCode.useTerminal": false,
+    "git.autoRepositoryDetection": false
 
 Then:
     claude-box setup     # build images, networks, proxy

@@ -358,6 +358,8 @@ cmd_up() {
       cb_warn "a Claude session is running in $CB_NAME; it will be terminated"
     fi
     cb_docker rm -f "$CB_NAME" >/dev/null 2>&1 || true
+    # An explicit recreate is the user saying the current tree is fine.
+    CB_ACCEPT_MASK_CHANGES=1
   fi
   cb_ensure_container
   say "$CB_NAME is running for $CB_PROJECT_DIR"
@@ -546,6 +548,13 @@ doctor_settings() {
       else
         check_fail "$f: claudeProcessWrapper is '$wrapper', which is not an installed claude-box-exec"
       fi
+    fi
+    # Nested repositories created inside the container are writable until the
+    # next start; the IDE's git integration runs `git status` in them (hooks,
+    # core.fsmonitor) on the host if it auto-detects subfolder repositories.
+    if ! grep -v '^[[:space:]]*//' "$f" 2>/dev/null |
+      grep -Eq '"git\.autoRepositoryDetection"[[:space:]]*:[[:space:]]*false'; then
+      check_warn "$f: set \"git.autoRepositoryDetection\": false - otherwise the IDE runs git (and its hooks/fsmonitor) in repositories Claude creates inside the project"
     fi
     if [ "$use_terminal" = true ]; then
       check_fail "$f: claudeCode.useTerminal is true - terminal mode ignores claudeProcessWrapper; set it to false"

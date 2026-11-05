@@ -339,6 +339,26 @@ printf 'NEW=1\n' >"$PROJECT/.env.local"
 v="$(in_box "cat .env.local" 2>&1 || true)"
 [ -z "$v" ] && ok ".env.local created on the host later is masked" || not_ok ".env.local created later is masked" "$v"
 
+echo "== extra: nested repositories and mount-option injection"
+mkdir -p "$PROJECT/nested/.git/hooks"
+(cd "$PROJECT" && "$WRAPPER" --version >/dev/null 2>&1) || true
+if in_box "echo 'touch /tmp/pwned' > nested/.git/hooks/post-checkout" >/dev/null 2>&1; then
+  not_ok "a nested .git is read-only after the next start"
+else
+  ok "a nested .git is read-only after the next start"
+fi
+evil="$PROJECT/q,src=$HOME,dst=/home/claude/leak"
+mkdir -p "$evil" && : >"$evil/.env"
+docker rm -f "$NAME" >/dev/null 2>&1 || true
+out="$(cd "$PROJECT" && "$WRAPPER" --version 2>&1)" && st=0 || st=$?
+if [ "$st" != 0 ] && ! docker inspect "$NAME" >/dev/null 2>&1; then
+  ok "a file name with a comma cannot inject mount options (start refused)"
+else
+  not_ok "a file name with a comma cannot inject mount options" "status $st: $out"
+fi
+rm -rf "$evil"
+(cd "$PROJECT" && "$CLI" up >/dev/null 2>&1) || not_ok "container comes back after removing the bad name"
+
 echo "== extra: fail closed"
 out="$(cd "$PROJECT" && DOCKER_HOST=unix:///nonexistent.sock "$WRAPPER" --version 2>/dev/null)" && st=0 || st=$?
 if [ "$st" != 0 ] && [ -z "$out" ]; then
