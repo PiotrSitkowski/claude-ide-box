@@ -39,6 +39,7 @@ relying on it.
 - [Threat model](#threat-model)
 - [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows](#windows) · [separate IDE profile](#try-it-first-in-a-separate-ide-profile) · [Podman and rootless engines](#podman-and-rootless-engines)
 - [Daily use](#daily-use)
+- [Trying changes on a copy](#trying-changes-on-a-copy-up---try)
 - [What runs in the box](#what-runs-in-the-box) - [dev servers](#dev-servers-react-vite-next-django-) · [office documents](#office-documents) · [personal data](#personal-data-in-the-project)
 - [Modules](#modules)
 - [Network allowlist](#network-allowlist)
@@ -401,6 +402,7 @@ creates its container (a few seconds); later sessions reuse it.
 | `claude-ide-box logs` | wrapper log, requests the proxy denied, and a per-domain summary with the `allow`/`preset` command for each (`--all` for the full proxy log) |
 | `claude-ide-box allow example.org` | allow a domain (`.example.org` for subdomains too) |
 | `claude-ide-box up --recreate` | apply changed masks or settings now |
+| `claude-ide-box up --try` | let Claude work on a throw-away copy; `try diff`, then `try apply` or `try discard` (`try end` asks) |
 | `claude-ide-box down` / `rm` | stop / remove this project's container (`rm --volume` also deletes history) |
 | `claude-ide-box doctor` | check the whole setup; non-zero exit on any failure |
 
@@ -421,6 +423,54 @@ the map in clear text. If it finds any - a restored folder always holds them, a 
 in-place restore or when a value was written into it - or if the map is gone, was replaced or the
 check cannot run, nothing starts and the message names the files (never the values). The project
 container never sees the map.
+
+## Trying changes on a copy (`up --try`)
+
+```bash
+claude-ide-box up --try
+```
+
+copies the project and starts a separate container for it. The copy is mounted at the project's
+own path, so the IDE panel works as usual and every path it sends stays valid, but Claude's edits
+land in the copy, not in your files - the editor keeps showing your files. When Claude is done:
+
+| Command | |
+|---|---|
+| `claude-ide-box try` | state of the session and a count of changes |
+| `claude-ide-box try diff` | every changed path, and a unified diff of each changed file |
+| `claude-ide-box try apply` | write the changes into the project and end the session |
+| `claude-ide-box try discard` | throw the copy away; the project stays as it was |
+| `claude-ide-box try end` | show the diff, then ask: apply, discard or keep going |
+
+While a session is active, every new IDE session of the project uses the copy's container
+(`up --try` again resumes it). The copy, plus a snapshot of the project taken at the same moment,
+live in `~/.cache/claude-ide-box/try/` (`XDG_CACHE_HOME`): a full copy, twice, so mind large
+`node_modules` or build directories. A plain copy was chosen over the alternatives: an overlay
+filesystem needs privileges the container must not have (and does not exist on macOS hosts), and a
+git worktree leaves out untracked and ignored files and needs the main repository's `.git`.
+
+**What the container gets is unchanged.** The same masks and read-only paths are applied to the
+copy, the same network, limits and engine checks to the container, and its home volume is separate
+and removed with the session. Masked files (`.env` and the rest, including files they link to) are
+emptied in the copy, so the secrets are not duplicated on disk at all.
+
+**Applying runs nothing from the project.** `try apply` and `try diff` first remove the session's
+container, so nothing can change the copy while it is read, and then only compare and copy files
+(`cmp`, `diff`, `cp`, `mv`, `ln`, `rm`, `mkdir`, `rmdir`) - no `git`, `patch` or hooks. They never:
+
+- write a masked path, a read-only path (`.git`, `.vscode`, `.idea`, ...) or anything inside a
+  `.git` directory at any depth - commits made in the copy are not applied, only files;
+- follow a symlink: links are applied as links, and a path whose directory in the copy was replaced
+  by a link (which could point at a host directory) is not read at all;
+- write through a directory of the project that leads out of it, or apply special files (FIFOs,
+  sockets);
+- remove a directory that still holds files.
+
+**Conflicts.** A path that Claude changed and that you also changed, differently, since the copy
+was made is a conflict. `try apply` then writes nothing and lists them; resolve them by hand
+(Claude's versions are in the copy) or run `try apply --skip-conflicts` to apply everything else
+and keep the copy for the rest. A change you made that Claude did not touch is always kept.
+Executable bits are applied; other permission changes are not.
 
 ## What runs in the box
 

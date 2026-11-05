@@ -35,6 +35,7 @@ do one of these:
 | change the sandbox configuration | anything under `~/.config/claude-ide-box`, the proxy allowlist |
 | make the wrapper run `claude` on the host | any fail-open path |
 | start in a folder holding restored personal data | a container starting in, above or below a copy or restored folder recorded by pii-airgap whose check reports values of its token map, whose map is missing or replaced, or whose check fails; the map reaching the project container |
+| abuse a try session (`up --try`) | make `try diff` or `try apply` read a host file outside the copy, write a masked or read-only path or a `.git` directory, write outside the project, or run anything from the project |
 
 ## Out of scope
 
