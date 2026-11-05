@@ -55,8 +55,12 @@ Current project (the working directory)
 
 Network
   allow DOMAIN                add DOMAIN (or .DOMAIN for subdomains) to the allowlist
-  preset NAME on|off          proxy presets: php, github (global)
-                              mask presets:  prestashop (this project)
+  presets                     list proxy and mask presets and their state
+  preset NAME on|off          proxy presets are global, mask presets per project
+
+Modules
+  profiles                    list image profiles (built-in and your own)
+  profile [NAME...]           show or set this project's profiles, e.g. python java
   logs [--all]                wrapper log and requests denied by the proxy
 
 Safety
@@ -84,8 +88,22 @@ cb_valid_domain() {
   printf '%s\n' "$1" | grep -Eq '^\.?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$'
 }
 
+# Proxy presets: the user's own in ~/.config/claude-ide-box/presets/<name>.txt
+# (kept across updates) take precedence over the shipped proxy/presets.
 cb_preset_file() {
-  printf '%s/proxy/presets/%s.txt\n' "$CB_ROOT" "$1"
+  case "$1" in
+    "" | *[!a-z0-9_-]*) printf '%s\n' "/nonexistent" ; return 0 ;;
+  esac
+  if [ -f "$CB_CONFIG_DIR/presets/$1.txt" ]; then
+    printf '%s\n' "$CB_CONFIG_DIR/presets/$1.txt"
+  else
+    printf '%s/proxy/presets/%s.txt\n' "$CB_ROOT" "$1"
+  fi
+}
+
+# First comment line of a module file, used as its description.
+cb_module_description() {
+  sed -n 's/^#[[:space:]]*//p' "$1" 2>/dev/null | head -n 1
 }
 
 # Strip comments and blanks from allowlist files.
@@ -182,7 +200,7 @@ cmd_preset() {
     say "mask preset $name $state for $CB_PROJECT_DIR (applies when the container is next created; 'claude-ide-box up --recreate')"
     return 0
   fi
-  [ -f "$(cb_preset_file "$name")" ] || cb_die "unknown preset '$name' (proxy: php, github; mask: prestashop)"
+  [ -f "$(cb_preset_file "$name")" ] || cb_die "unknown preset '$name' ('claude-ide-box presets' lists them)"
   cb_load_config
   list="$(cb_toggle_word "$CFG_PROXY_PRESETS" "$name" "$state")"
   cb_config_set "$CB_CONFIG_FILE" PROXY_PRESETS "$list"
@@ -212,19 +230,50 @@ cb_build() {
   cb_docker build ${net[@]+"${net[@]}"} -t "$tag" "$@" "$ctx" >&2 || cb_die "building $tag failed"
 }
 
+# cb_build_profiles LIST - build the image chain for a profile combination:
+# env:a FROM base, env:a.b FROM env:a, ... Each image is built once per run.
+CB_BUILT=" "
+cb_build_profiles() {
+  local list p acc="" prev tag dir
+  list="$(cb_profile_list "$1")"
+  [ -n "$list" ] || return 0
+  cb_require_profiles "$list"
+  prev="$(cb_image_for_profile base)"
+  for p in $list; do
+    acc="${acc:+$acc.}$p"
+    tag="$CB_INSTANCE/env:$acc"
+    case "$CB_BUILT" in
+      *" $tag "*) ;;
+      *)
+        dir="$(cb_profile_dir "$p")"
+        cb_build "$tag" "$dir" --build-arg "BASE_IMAGE=$prev"
+        CB_BUILT="$CB_BUILT$tag "
+        ;;
+    esac
+    prev="$tag"
+  done
+}
+
 cmd_setup() {
-  local profiles="" p
+  local combos="" c
   while [ $# -gt 0 ]; do
     case "$1" in
-      --profile) [ $# -ge 2 ] || cb_die "--profile needs a name"; profiles="$profiles $2"; shift 2 ;;
-      --profile=*) profiles="$profiles ${1#--profile=}"; shift ;;
+      --profile) [ $# -ge 2 ] || cb_die "--profile needs a name"; combos="$combos $(printf '%s' "$2" | tr ' ' ',')"; shift 2 ;;
+      --profile=*) combos="$combos $(printf '%s' "${1#--profile=}" | tr ' ' ',')"; shift ;;
       *) cb_die "unknown option for setup: $1" ;;
     esac
   done
+  # Run inside a project: also build the profiles that project uses.
+  if (cb_set_project "${PWD:-$(pwd)}") >/dev/null 2>&1; then
+    project_from_pwd
+  fi
   cb_load_config
   cb_find_docker
   cb_require_docker
-  profiles="$profiles $CFG_BUILD_PROFILES"
+  combos="$combos $CFG_BUILD_PROFILES $(printf '%s' "$CFG_PROFILE" | tr ' ' ',')"
+  for c in $combos; do
+    cb_require_profiles "$c"
+  done
 
   cb_container_uid
   if [ "$(id -u)" = "0" ] && [ -z "$CFG_CONTAINER_UID" ]; then
@@ -235,12 +284,8 @@ cmd_setup() {
     --build-arg "CLAUDE_CODE_VERSION=$CFG_CLAUDE_CODE_VERSION" \
     --build-arg "USER_UID=$CB_UID" \
     --build-arg "USER_GID=$CB_GID"
-  for p in $profiles; do
-    [ "$p" != base ] || continue
-    case "$p" in *[!a-z0-9_-]*) cb_die "invalid profile name '$p'" ;; esac
-    [ -f "$CB_ROOT/image/profiles/$p/Dockerfile" ] || cb_die "unknown profile '$p' (no image/profiles/$p/Dockerfile)"
-    cb_build "$(cb_image_for_profile "$p")" "$CB_ROOT/image/profiles/$p" \
-      --build-arg "BASE_IMAGE=$(cb_image_for_profile base)"
+  for c in $combos; do
+    cb_build_profiles "$c"
   done
   cb_build "$CB_PROXY_IMAGE" "$CB_ROOT/proxy" --build-arg "BASE_IMAGE=$CFG_PROXY_BASE_IMAGE"
 
@@ -494,6 +539,74 @@ EOF
 }
 
 # --------------------------------------------------------------------------
+# Modules: profiles and presets
+# --------------------------------------------------------------------------
+
+cmd_profile() {
+  project_from_pwd
+  cb_load_config
+  if [ $# -eq 0 ]; then
+    say "${CFG_PROFILE:-base}"
+    return 0
+  fi
+  local list
+  list="$(cb_profile_list "$*")"
+  cb_require_profiles "$list"
+  cb_config_set "$CB_PROJECT_CONFIG" PROFILE "${list:-base}"
+  say "profile for $CB_PROJECT_DIR: ${list:-base}"
+  if [ -n "$list" ]; then
+    say "build it with 'claude-ide-box setup' here; the next session starts with the new image"
+  fi
+}
+
+cmd_profiles() {
+  local d name src
+  say "Image profiles (combine them: claude-ide-box profile python java):"
+  for d in "$CB_CONFIG_DIR"/profiles/*/ "$CB_ROOT"/image/profiles/*/; do
+    [ -f "$d/Dockerfile" ] || continue
+    name="$(basename "$d")"
+    case "$d" in
+      "$CB_CONFIG_DIR"/*) src=user ;;
+      *)
+        # a user profile with the same name takes precedence
+        [ ! -f "$CB_CONFIG_DIR/profiles/$name/Dockerfile" ] || continue
+        src=built-in
+        ;;
+    esac
+    printf '  %-12s %-9s %s\n' "$name" "$src" "$(cb_module_description "$d/Dockerfile")"
+  done
+  say ""
+  say "Add your own: $CB_CONFIG_DIR/profiles/<name>/Dockerfile starting with"
+  say "  ARG BASE_IMAGE / FROM \${BASE_IMAGE}, installing as root, ending with USER claude"
+}
+
+cmd_presets() {
+  local f name src state
+  cb_load_config
+  say "Proxy presets (claude-ide-box preset NAME on|off):"
+  for f in "$CB_CONFIG_DIR"/presets/*.txt "$CB_ROOT"/proxy/presets/*.txt; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f" .txt)"
+    case "$f" in
+      "$CB_CONFIG_DIR"/*) src=user ;;
+      *) [ ! -f "$CB_CONFIG_DIR/presets/$name.txt" ] || continue; src=built-in ;;
+    esac
+    state=off
+    ! cb_word_in "$name" "$CFG_PROXY_PRESETS" || state=on
+    printf '  %-12s %-4s %-9s %s\n' "$name" "$state" "$src" "$(cb_module_description "$f")"
+  done
+  say ""
+  say "Mask presets (per project):"
+  state=off
+  if (cb_set_project "${PWD:-$(pwd)}") >/dev/null 2>&1; then
+    project_from_pwd
+    cb_load_config
+    ! cb_word_in prestashop "$CFG_MASK_PRESETS" || state=on
+  fi
+  printf '  %-12s %-4s %-9s %s\n' prestashop "$state" built-in "PrestaShop database credentials"
+}
+
+# --------------------------------------------------------------------------
 # doctor
 # --------------------------------------------------------------------------
 
@@ -703,6 +816,9 @@ main() {
     logs) cmd_logs "$@" ;;
     allow) cmd_allow "$@" ;;
     preset) cmd_preset "$@" ;;
+    presets) cmd_presets "$@" ;;
+    profile) cmd_profile "$@" ;;
+    profiles) cmd_profiles "$@" ;;
     guard) cmd_guard "$@" ;;
     doctor) cmd_doctor "$@" ;;
     *) cb_die "unknown command '$cmd' (see 'claude-ide-box help')" ;;

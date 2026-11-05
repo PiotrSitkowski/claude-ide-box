@@ -292,7 +292,7 @@ cb_validate_config() {
     *[!0-9.]* | "") cb_die "invalid PROXY_IP '$CFG_PROXY_IP'" ;;
   esac
   case "$CFG_PROFILE" in
-    *[!a-z0-9_-]* | "") cb_die "invalid PROFILE '$CFG_PROFILE'" ;;
+    *[!a-z0-9_,\ -]*) cb_die "invalid PROFILE '$CFG_PROFILE' (profile names, separated by spaces or commas)" ;;
   esac
   case "$CFG_PIDS_LIMIT" in
     *[!0-9]* | "") cb_die "invalid PIDS_LIMIT '$CFG_PIDS_LIMIT'" ;;
@@ -387,8 +387,53 @@ CB_NETWORK_EGRESS="$CB_INSTANCE-egress"
 CB_PROXY_NAME="$CB_INSTANCE-proxy"
 CB_PROXY_IMAGE="$CB_INSTANCE/proxy:latest"
 
+# Profiles are image layers stacked on the base image, e.g. PROFILE="python
+# java". A profile is a directory with a Dockerfile that starts
+# `FROM ${BASE_IMAGE}`: in ~/.config/claude-ide-box/profiles/<name> (the
+# user's own, kept across updates) or image/profiles/<name> (shipped).
+
+# cb_profile_list LIST - canonical form: sorted, unique, without "base".
+cb_profile_list() {
+  local p out=""
+  for p in $(printf '%s\n' "$1" | tr ',' ' '); do
+    [ "$p" = base ] || out="$out$p
+"
+  done
+  printf '%s' "$out" | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+
+# cb_profile_dir NAME - directory holding the profile's Dockerfile.
+cb_profile_dir() {
+  case "$1" in
+    "" | *[!a-z0-9_-]*) return 1 ;;
+  esac
+  if [ -f "$CB_CONFIG_DIR/profiles/$1/Dockerfile" ]; then
+    printf '%s\n' "$CB_CONFIG_DIR/profiles/$1"
+  elif [ -f "$CB_ROOT/image/profiles/$1/Dockerfile" ]; then
+    printf '%s\n' "$CB_ROOT/image/profiles/$1"
+  else
+    return 1
+  fi
+}
+
+# cb_require_profiles LIST - fail closed on a profile that does not exist.
+cb_require_profiles() {
+  local p
+  for p in $(cb_profile_list "$1"); do
+    cb_profile_dir "$p" >/dev/null ||
+      cb_die "unknown profile '$p' ('claude-ide-box profiles' lists the available ones)"
+  done
+}
+
+# cb_image_for_profile LIST - image for a profile combination.
 cb_image_for_profile() {
-  printf '%s/%s:latest\n' "$CB_INSTANCE" "$1"
+  local list
+  list="$(cb_profile_list "$1")"
+  if [ -z "$list" ]; then
+    printf '%s/base:latest\n' "$CB_INSTANCE"
+  else
+    printf '%s/env:%s\n' "$CB_INSTANCE" "$(printf '%s' "$list" | tr ' ' '.')"
+  fi
 }
 
 # --------------------------------------------------------------------------
@@ -880,12 +925,13 @@ cb_container_busy() {
 # configuration. Must be called with stdout pointing away from the IDE.
 cb_ensure_container() {
   local image image_id hash state running label
+  cb_require_profiles "$CFG_PROFILE"
   image="$(cb_image_for_profile "$CFG_PROFILE")"
 
   cb_lock "$CB_NAME"
   if ! image_id="$(cb_docker image inspect --format '{{.Id}}' "$image" 2>/dev/null)"; then
     cb_require_docker
-    cb_die "image $image not found - run 'claude-ide-box setup' (with --profile $CFG_PROFILE for a profile)"
+    cb_die "image $image not found - run 'claude-ide-box setup' in $CB_PROJECT_DIR"
   fi
 
   cb_build_run_args

@@ -189,7 +189,7 @@ test_setup_passes_uid_gid_and_version() {
 test_setup_profile_builds_on_base() {
   run_cli setup --profile php
   assert_status 0 "$STATUS"
-  assert_contains "$(calls)" "-t claude-ide-box/php:latest"
+  assert_contains "$(calls)" "-t claude-ide-box/env:php "
   assert_contains "$(calls)" "BASE_IMAGE=claude-ide-box/base:latest"
 }
 
@@ -428,4 +428,98 @@ test_concurrent_guard_keeps_original_binary() {
     [ ! -L "$b.orig" ] || fail "$b.orig was overwritten by the symlink"
     assert_eq "#!/bin/sh" "$(head -1 "$b.orig")"
   done
+}
+
+# --- modules: composable profiles, user profiles and presets -------------------
+
+user_profile() {
+  mkdir -p "$HOME/.config/claude-ide-box/profiles/$1"
+  # shellcheck disable=SC2016 # a literal ${BASE_IMAGE} for the Dockerfile
+  printf 'ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\n' >"$HOME/.config/claude-ide-box/profiles/$1/Dockerfile"
+}
+
+project_conf() {
+  local name
+  name="$(cd "$PROJECT" && "$CLI" status | awk '/^container:/{print $2}')"
+  mkdir -p "$HOME/.config/claude-ide-box/projects"
+  printf '%s\n' "$1" >"$HOME/.config/claude-ide-box/projects/$name.conf"
+}
+
+test_setup_builds_a_profile_chain() {
+  user_profile mytool
+  run_cli setup --profile php,mytool
+  assert_status 0 "$STATUS"
+  local c
+  c="$(calls)"
+  assert_contains "$c" "-t claude-ide-box/env:mytool "
+  assert_contains "$c" "-t claude-ide-box/env:mytool.php "
+  assert_contains "$c" "BASE_IMAGE=claude-ide-box/env:mytool "
+  assert_contains "$c" "$HOME/.config/claude-ide-box/profiles/mytool"
+}
+
+test_setup_builds_the_current_projects_profiles() {
+  user_profile mytool
+  project_conf 'PROFILE="mytool php"'
+  run_cli setup
+  assert_status 0 "$STATUS"
+  assert_contains "$(calls)" "-t claude-ide-box/env:mytool.php "
+}
+
+test_wrapper_uses_the_combined_image() {
+  user_profile mytool
+  project_conf 'PROFILE="php mytool"'
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_contains "$(run_args | tr '\n' ' ')" "claude-ide-box/env:mytool.php sleep infinity"
+}
+
+test_unknown_profile_fails_closed() {
+  project_conf 'PROFILE="nosuchthing"'
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "nosuchthing"
+  assert_file_missing "$FAKE_DOCKER_DIR/run.args"
+}
+
+test_profile_command_sets_and_shows_the_project_profiles() {
+  user_profile mytool
+  run_cli profile php mytool
+  assert_status 0 "$STATUS"
+  assert_contains "$OUT" "mytool php"
+  assert_contains "$OUT" "setup"
+  run_cli profile
+  assert_contains "$OUT" "mytool php"
+  run_cli profile nosuchthing
+  assert_nonzero "$STATUS"
+  run_cli profile base
+  assert_status 0 "$STATUS"
+  run_cli profile
+  assert_contains "$OUT" "base"
+}
+
+test_profiles_command_lists_builtin_and_user_profiles() {
+  user_profile mytool
+  run_cli profiles
+  assert_status 0 "$STATUS"
+  assert_contains "$OUT" "php"
+  assert_contains "$OUT" "mytool"
+  assert_contains "$OUT" "user"
+}
+
+test_user_preset_can_be_enabled() {
+  mkdir -p "$HOME/.config/claude-ide-box/presets"
+  printf '# corporate mirror\nnexus.example.com\n' >"$HOME/.config/claude-ide-box/presets/corp.txt"
+  run_cli preset corp on
+  assert_status 0 "$STATUS"
+  assert_contains "$(generated_allowlist)" "nexus.example.com"
+}
+
+test_presets_command_lists_state() {
+  run_cli preset php on
+  run_cli presets
+  assert_status 0 "$STATUS"
+  assert_contains "$OUT" "php"
+  assert_contains "$OUT" "on"
+  assert_contains "$OUT" "github"
+  assert_contains "$OUT" "prestashop"
 }
