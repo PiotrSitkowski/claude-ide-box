@@ -195,7 +195,9 @@ test_fail_closed_when_daemon_down() {
 
 test_fail_closed_when_docker_missing() {
   rm "$SANDBOX/bin/docker"
-  export PATH="$SANDBOX/bin:$(dirname "$BASH"):/bin"
+  local bashdir
+  bashdir="$(dirname "$BASH")"
+  export PATH="$SANDBOX/bin:$bashdir:/bin"
   CLAUDE_BOX_DOCKER="$SANDBOX/nonexistent" run_wrapper --version
   assert_nonzero "$STATUS"
   assert_eq "" "$OUT"

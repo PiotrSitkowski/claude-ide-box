@@ -20,7 +20,9 @@ EOS
   chmod +x "$SANDBOX/bin/claude"
   # Keep the directory of the bash running the tests (e.g. /usr/local/bin) so
   # the scripts' "#!/usr/bin/env bash" finds the same interpreter.
-  export PATH="$SANDBOX/bin:$(dirname "$BASH"):/usr/bin:/bin:/usr/sbin:/sbin"
+  local bashdir
+  bashdir="$(dirname "$BASH")"
+  export PATH="$SANDBOX/bin:$bashdir:/usr/bin:/bin:/usr/sbin:/sbin"
   unset CLAUDE_BOX_DOCKER CLAUDE_BOX_DEBUG DOCKER_HOST DOCKER_CONTEXT || true
   # Drop anything the developer's shell may have that the wrapper would forward.
   local n
