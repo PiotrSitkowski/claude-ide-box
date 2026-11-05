@@ -335,16 +335,26 @@ cb_project_hash() {
 }
 
 cb_container_name() {
-  printf 'claude-box-%s-%s\n' "$(cb_sanitize_name "$(basename "$1")")" "$(cb_project_hash "$1")"
+  printf '%s-%s-%s\n' "${CB_INSTANCE:-claude-box}" "$(cb_sanitize_name "$(basename "$1")")" "$(cb_project_hash "$1")"
 }
 
-CB_NETWORK_INTERNAL="claude-box-internal"
-CB_NETWORK_EGRESS="claude-box-egress"
-CB_PROXY_NAME="claude-box-proxy"
-CB_PROXY_IMAGE="claude-box/proxy:latest"
+# CLAUDE_BOX_INSTANCE namespaces every Docker object claude-box creates. It
+# exists so the integration tests can run next to a real installation; normal
+# use never sets it.
+CB_INSTANCE="${CLAUDE_BOX_INSTANCE:-claude-box}"
+case "$CB_INSTANCE" in
+  *[!a-z0-9-]* | "" | -*)
+    echo "claude-box: invalid CLAUDE_BOX_INSTANCE '$CB_INSTANCE'" >&2
+    exit 1
+    ;;
+esac
+CB_NETWORK_INTERNAL="$CB_INSTANCE-internal"
+CB_NETWORK_EGRESS="$CB_INSTANCE-egress"
+CB_PROXY_NAME="$CB_INSTANCE-proxy"
+CB_PROXY_IMAGE="$CB_INSTANCE/proxy:latest"
 
 cb_image_for_profile() {
-  printf 'claude-box/%s:latest\n' "$1"
+  printf '%s/%s:latest\n' "$CB_INSTANCE" "$1"
 }
 
 # --------------------------------------------------------------------------
