@@ -114,7 +114,11 @@ case "$cmd" in
     name="$1"
     shift
     if [ "${1:-}" = "ps" ]; then
-      if [ "${FAKE_BUSY:-0}" = "1" ]; then printf 'sleep\nclaude\n'; else printf 'sleep\n'; fi
+      case "${FAKE_BUSY:-0}" in
+        1) printf 'sleep infinity\nclaude --output-format stream-json\n' ;;
+        exe) printf 'sleep infinity\n/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe --verbose\n' ;;
+        *) printf 'sleep infinity\nbash\n' ;;
+      esac
       exit 0
     fi
     printf '%s\n' "$name" >"$dir/exec.name"

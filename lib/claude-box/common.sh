@@ -89,7 +89,7 @@ cb_path_inside() {
         local pdir
         pdir="$(cd -P "$dir" 2>/dev/null && pwd -P)" || return 1
         case "$resolved" in
-          "$pdir" | "$pdir"/*) ;;
+          "$pdir" | "$pdir"/*) return 0 ;;
           *) return 1 ;;
         esac
         ;;
@@ -99,6 +99,23 @@ cb_path_inside() {
     "$dir" | "$dir"/*) return 0 ;;
   esac
   return 1
+}
+
+# cb_to_project_path DIR PATH - express a resolved PATH inside DIR through
+# DIR's own spelling. The container mounts the project at the logical path the
+# IDE uses (e.g. /tmp/x on macOS, where /tmp -> /private/tmp), so mount
+# destinations must use it too.
+cb_to_project_path() {
+  local dir="$1" path="$2" pdir
+  case "$path" in
+    "$dir" | "$dir"/*) printf '%s\n' "$path"; return 0 ;;
+  esac
+  pdir="$(cd -P "$dir" 2>/dev/null && pwd -P)" || pdir="$dir"
+  case "$path" in
+    "$pdir") printf '%s\n' "$dir" ;;
+    "$pdir"/*) printf '%s%s\n' "$dir" "${path#"$pdir"}" ;;
+    *) printf '%s\n' "$path" ;;
+  esac
 }
 
 # --------------------------------------------------------------------------
@@ -270,6 +287,14 @@ cb_validate_config() {
   esac
   case "$CFG_PIDS_LIMIT" in
     *[!0-9]* | "") cb_die "invalid PIDS_LIMIT '$CFG_PIDS_LIMIT'" ;;
+  esac
+  local v
+  for v in "MEMORY=$CFG_MEMORY" "TMP_SIZE=$CFG_TMP_SIZE"; do
+    printf '%s\n' "${v#*=}" | grep -Eq '^[0-9]+[bkmgBKMG]?$' || cb_die "invalid ${v%%=*} '${v#*=}' (use e.g. 4g)"
+  done
+  printf '%s\n' "$CFG_CPUS" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || cb_die "invalid CPUS '$CFG_CPUS'"
+  case "$CFG_CONTAINER_UID$CFG_CONTAINER_GID" in
+    *[!0-9]*) cb_die "CONTAINER_UID and CONTAINER_GID must be numeric" ;;
   esac
   case "$CFG_GIT_WRITABLE$CFG_NONESSENTIAL_TRAFFIC$CFG_CLAUDEAI_CONNECTORS$CFG_AUTO_GUARD" in
     *[!01]*) cb_die "GIT_WRITABLE, NONESSENTIAL_TRAFFIC, CLAUDEAI_CONNECTORS and AUTO_GUARD must be 0 or 1" ;;
@@ -464,8 +489,15 @@ cb_lock() {
   while ! mkdir "$lock" 2>/dev/null; do
     pid="$(cat "$lock/pid" 2>/dev/null || true)"
     if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
-      cb_log "removing stale lock $lock (pid $pid is gone)"
-      rm -rf "$lock"
+      # Only one waiter may reap, and only the lock it judged stale: another
+      # waiter may already have reaped it and taken a fresh one.
+      if mkdir "$lock.reap" 2>/dev/null; then
+        if [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$pid" ]; then
+          cb_log "removing stale lock $lock (pid $pid is gone)"
+          rm -rf "$lock"
+        fi
+        rmdir "$lock.reap" 2>/dev/null || true
+      fi
       continue
     fi
     if [ -z "$pid" ] && [ "$tries" -gt 25 ]; then
@@ -597,6 +629,7 @@ cb_compute_mounts() {
         continue
       fi
       [ -e "$target" ] || continue
+      target="$(cb_to_project_path "$dir" "$target")"
     fi
     if [ -d "$target" ]; then
       cb_emit_mount dir "$target"
@@ -618,7 +651,7 @@ cb_compute_mounts() {
     if [ -L "$path" ]; then
       target="$(cb_resolve_path "$path" 2>/dev/null)" || target=""
       if [ -n "$target" ] && cb_path_inside "$dir" "$target" && [ -e "$target" ]; then
-        cb_emit_mount ro "$target"
+        cb_emit_mount ro "$(cb_to_project_path "$dir" "$target")"
       else
         cb_log "read-only: $path is a symlink pointing outside the project; it dangles in the container"
       fi
@@ -675,7 +708,7 @@ cb_check_mask_record() {
     fi
   done <"$record"
   if [ -n "$missing" ]; then
-    cb_die "masked path(s) were moved, replaced or deleted:$missing - this can be an attempt from inside the container to escape a mask from inside the container to escape the mask. Check the project; if you moved or deleted them yourself, run 'claude-box up --recreate' in $CB_PROJECT_DIR."
+    cb_die "masked path(s) were moved, replaced or deleted:$missing - this can be an attempt from inside the container to escape a mask. Check the project; if you moved or deleted them yourself, run 'claude-box up --recreate' in $CB_PROJECT_DIR."
   fi
 }
 
@@ -787,7 +820,8 @@ EOF
 # Busy = a claude process is running inside the container.
 cb_container_busy() {
   local n
-  n="$(cb_docker exec "$CB_NAME" ps -eo comm= 2>/dev/null | grep -c -x 'claude' || true)"
+  n="$(cb_docker exec "$CB_NAME" ps -eo args= 2>/dev/null |
+    awk '{ n = split($1, p, "/"); if (p[n] == "claude" || p[n] == "claude.exe") c++ } END { print c + 0 }')"
   [ "${n:-0}" -gt 0 ]
 }
 
@@ -871,7 +905,11 @@ cb_env_passthrough() {
     fi
     value="${!name}"
     case "$value" in
-      /* | "~"*)
+      "~"*)
+        cb_log "env: not passing $name (value is a home-relative host path)"
+        continue
+        ;;
+      /*)
         if ! cb_path_inside "$CB_PROJECT_DIR" "$value"; then
           cb_log "env: not passing $name (value is a host path outside the project)"
           continue

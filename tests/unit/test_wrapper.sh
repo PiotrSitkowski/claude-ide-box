@@ -479,3 +479,62 @@ test_moved_masked_file_with_decoy_fails_closed() {
   assert_nonzero "$STATUS"
   assert_contains "$ERR" "app/config/parameters.php"
 }
+
+# --- code review follow-ups -----------------------------------------------------
+
+test_symlinked_secret_masked_when_project_path_has_symlink() {
+  mkdir -p "$SANDBOX/real/proj/config"
+  ln -s "$SANDBOX/real" "$SANDBOX/link"
+  echo 'SECRET' >"$SANDBOX/real/proj/config/prod"
+  ln -s config/prod "$SANDBOX/real/proj/.env"
+  RUN_DIR="$SANDBOX/link/proj" run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_contains "$(run_args)" "dst=$SANDBOX/link/proj/config/prod,readonly"
+}
+
+test_prompt_with_path_like_text_is_kept() {
+  run_wrapper "refactor src/index.js" --verbose
+  assert_eq "claude refactor src/index.js --verbose" "$(exec_args)"
+}
+
+test_tilde_env_value_is_not_passed() {
+  # shellcheck disable=SC2088 # the literal, unexpanded tilde is what is being tested
+  CLAUDE_CODE_FOO='~/.ssh/id_rsa' run_wrapper --version
+  assert_not_contains "$(cat "$FAKE_DOCKER_DIR/exec.env")" "CLAUDE_CODE_FOO"
+}
+
+test_tmp_size_with_mount_options_is_rejected() {
+  mkdir -p "$HOME/.config/claude-box"
+  echo 'TMP_SIZE="1g,exec"' >"$HOME/.config/claude-box/config"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "TMP_SIZE"
+}
+
+test_invalid_resource_settings_are_rejected() {
+  mkdir -p "$HOME/.config/claude-box"
+  local kv
+  for kv in 'MEMORY=lots' 'CPUS=two' 'CONTAINER_UID=abc'; do
+    echo "$kv" >"$HOME/.config/claude-box/config"
+    run_wrapper --version
+    assert_nonzero "$STATUS" "$kv must be rejected"
+  done
+}
+
+test_busy_detected_for_claude_exe() {
+  run_wrapper --version
+  : >"$PROJECT/.env"
+  FAKE_BUSY=exe run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "recreate"
+}
+
+test_mask_record_message_is_readable() {
+  : >"$PROJECT/.env"
+  run_wrapper --version
+  rm "$PROJECT/.env"
+  rm -f "$FAKE_DOCKER_DIR/state"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_not_contains "$ERR" "from inside the container to escape a mask from inside"
+}

@@ -80,6 +80,11 @@ sequenceDiagram
 | Networks | `claude-box-internal` (`--internal`, no route out, host gets no address on it) and `claude-box-egress` (only the proxy is on it). |
 | `guard` | Replaces the binary bundled with every installed extension version by a symlink to the wrapper, so even an extension that ignores the wrapper setting lands in the container. |
 
+The first start creates the read-only directories that do not exist yet (`.git`, `.vscode`,
+`.idea`, `.agent`, `.agents`, `.devcontainer`) as empty directories owned by you; otherwise Claude
+could create them writable. Git ignores an empty `.git` directory, and `git init` on the host
+fills it normally.
+
 One container and one home volume exist **per project** (`claude-box-<name>-<hash>`), so hooks,
 settings and history in one project's `~/.claude` never touch another project.
 
@@ -295,7 +300,7 @@ auto-updater is disabled inside the container on purpose - versions change only 
 | `network ... cannot be created` | `SUBNET` collides with an existing network; change `SUBNET` and `PROXY_IP` |
 | Extension works but `doctor` reports unguarded binaries | the extension updated; run `claude-box guard` (the wrapper also does it on start) |
 | `useTerminal is true` in `doctor` | terminal mode ignores the wrapper - set `"claudeCode.useTerminal": false` |
-| `masked path(s) were moved, replaced or deleted` | a masked file is not where it was when the container was created. If you did it, `claude-box up --recreate`; if not, find out what moved it before you do |
+| `masked path(s) were moved, replaced or deleted` | a masked file is not the same file (inode) it was when the container was created. Editors that save by writing a temp file and renaming it cause this too. If it was you, `claude-box up --recreate`; if not, find out what moved it first |
 | `... cannot be mounted safely` | a file or directory that has to be masked or made read-only has a comma, quote, tab or newline in its name; rename it |
 | Files created by Claude are owned by another user | the images were built for another UID; run `claude-box setup` as yourself. On Docker Desktop ownership is mapped to you regardless. |
 

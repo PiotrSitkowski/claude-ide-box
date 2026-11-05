@@ -53,8 +53,15 @@ cb_guard_state() {
   fi
 }
 
-# cb_guard_apply WRAPPER [quiet]
+# cb_guard_apply WRAPPER [quiet] - serialised with a lock: two wrappers
+# starting at once must not both move the same binary to .orig.
 cb_guard_apply() {
+  cb_lock guard
+  cb_guard_apply_locked "$@"
+  cb_unlock
+}
+
+cb_guard_apply_locked() {
   local wrapper="$1" quiet="${2:-}" b state count=0
   [ -x "$wrapper" ] || { echo "guard: wrapper $wrapper is not executable" >&2; return 1; }
   while IFS= read -r b; do
@@ -71,7 +78,10 @@ cb_guard_apply() {
         ;;
       unguarded)
         mv -f "$b" "$b.orig"
-        chmod a-x "$b.orig" 2>/dev/null || true
+        # Never chmod through a symlink: that would hit the wrapper itself.
+        if [ ! -L "$b.orig" ]; then
+          chmod a-x "$b.orig" 2>/dev/null || true
+        fi
         ln -s "$wrapper" "$b"
         ;;
     esac
@@ -90,11 +100,17 @@ EOF
 
 # cb_guard_undo WRAPPER
 cb_guard_undo() {
+  cb_lock guard
+  cb_guard_undo_locked "$@"
+  cb_unlock
+}
+
+cb_guard_undo_locked() {
   local wrapper="$1" b
   while IFS= read -r b; do
     [ -n "$b" ] || continue
     if [ -L "$b" ] && [ "$(readlink "$b")" = "$wrapper" ]; then
-      if [ -f "$b.orig" ]; then
+      if [ -f "$b.orig" ] && [ ! -L "$b.orig" ]; then
         rm -f "$b"
         mv "$b.orig" "$b"
         chmod 755 "$b"

@@ -399,3 +399,18 @@ test_doctor_warns_on_git_auto_repository_detection() {
   run_cli doctor
   assert_not_contains "$OUT" "git.autoRepositoryDetection"
 }
+
+test_concurrent_guard_keeps_original_binary() {
+  make_extensions
+  local _
+  for _ in 1 2 3 4 5 6; do
+    (cd "$PROJECT" && "$CLI" guard >/dev/null 2>&1) &
+  done
+  wait
+  local b
+  for b in $(all_bundled); do
+    [ -L "$b" ] || fail "$b is not a symlink"
+    [ ! -L "$b.orig" ] || fail "$b.orig was overwritten by the symlink"
+    assert_eq "#!/bin/sh" "$(head -1 "$b.orig")"
+  done
+}

@@ -63,14 +63,18 @@ is_leading_path() {
   case "$1" in
     node | bun | deno | claude) return 0 ;;
     -*) return 1 ;;
-    */*)
+    *[[:space:]]*) return 1 ;;
+    /*)
       if [ -f "$1" ]; then
         return 0
       fi
+      # An absolute path that no longer exists (e.g. a removed extension
+      # version) but clearly names a binary or script.
       case "$1" in
-        *claude | *claude.exe | *.js | *.cjs | *.mjs | */node | */bun) return 0 ;;
+        */claude | */claude.exe | *.js | *.cjs | *.mjs | */node | */bun) return 0 ;;
       esac
       ;;
+    ./* | ../*) [ -f "$1" ] && return 0 ;;
   esac
   return 1
 }
