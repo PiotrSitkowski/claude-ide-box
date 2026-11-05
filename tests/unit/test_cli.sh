@@ -273,10 +273,14 @@ EOS
   chmod +x "$SANDBOX/bin/ps"
 }
 
-linux_settings() {
-  local app="$1" content="$2"
-  mkdir -p "$HOME/.config/$app/User"
-  printf '%s\n' "$content" >"$HOME/.config/$app/User/settings.json"
+# Write an IDE user settings.json where doctor looks for it on this OS.
+ide_settings() {
+  local app="$1" content="$2" base="$HOME/.config"
+  if [ "$(uname -s)" = Darwin ]; then
+    base="$HOME/Library/Application Support"
+  fi
+  mkdir -p "$base/$app/User"
+  printf '%s\n' "$content" >"$base/$app/User/settings.json"
 }
 
 wrapper_real() {
@@ -297,7 +301,7 @@ healthy_host() {
 
 test_doctor_healthy() {
   healthy_host
-  linux_settings Code "{
+  ide_settings Code "{
   // comment
   \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\",
   \"claudeCode.useTerminal\": false,
@@ -309,7 +313,7 @@ test_doctor_healthy() {
 
 test_doctor_fails_on_use_terminal() {
   healthy_host
-  linux_settings Cursor "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\", \"claudeCode.useTerminal\": true }"
+  ide_settings Cursor "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\", \"claudeCode.useTerminal\": true }"
   run_cli doctor
   assert_nonzero "$STATUS"
   assert_contains "$OUT" "useTerminal"
@@ -317,7 +321,7 @@ test_doctor_fails_on_use_terminal() {
 
 test_doctor_fails_when_wrapper_not_set() {
   healthy_host
-  linux_settings Antigravity '{ "editor.fontSize": 12 }'
+  ide_settings Antigravity '{ "editor.fontSize": 12 }'
   run_cli doctor
   assert_nonzero "$STATUS"
   assert_contains "$OUT" "claudeProcessWrapper"
@@ -325,14 +329,14 @@ test_doctor_fails_when_wrapper_not_set() {
 
 test_doctor_reads_legacy_key() {
   healthy_host
-  linux_settings Code "{ \"claude-code.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  ide_settings Code "{ \"claude-code.claudeProcessWrapper\": \"$(wrapper_real)\" }"
   run_cli doctor
   assert_status 0 "$STATUS"
 }
 
 test_doctor_ignores_commented_out_setting() {
   healthy_host
-  linux_settings Code "{
+  ide_settings Code "{
   // \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\",
 }"
   run_cli doctor
@@ -341,7 +345,7 @@ test_doctor_ignores_commented_out_setting() {
 
 test_doctor_fails_on_unguarded_binary() {
   healthy_host
-  linux_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  ide_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
   mkdir -p "$HOME/.vscode/extensions/anthropic.claude-code-2.1.400-linux-x64/resources/native-binary"
   : >"$HOME/.vscode/extensions/anthropic.claude-code-2.1.400-linux-x64/resources/native-binary/claude"
   run_cli doctor
@@ -351,7 +355,7 @@ test_doctor_fails_on_unguarded_binary() {
 
 test_doctor_fails_on_host_claude_process() {
   healthy_host
-  linux_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  ide_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
   fake_ps "  1 /sbin/init
   4242 /home/u/.vscode/extensions/anthropic.claude-code-2.1.318-linux-x64/resources/native-binary/claude.orig --verbose
   4243 /usr/local/bin/claude --resume x"
@@ -363,7 +367,7 @@ test_doctor_fails_on_host_claude_process() {
 
 test_doctor_warns_on_claude_in_path() {
   healthy_host
-  linux_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  ide_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
   printf '#!/bin/sh\n' >"$SANDBOX/bin/claude"
   chmod +x "$SANDBOX/bin/claude"
   run_cli doctor
@@ -380,7 +384,7 @@ test_doctor_fails_without_daemon() {
 
 test_doctor_fails_when_network_not_internal() {
   healthy_host
-  linux_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  ide_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
   FAKE_NETWORK_INFO="false map[] 172.30.99.0/24" run_cli doctor
   assert_nonzero "$STATUS"
   assert_contains "$OUT" "internal"
@@ -388,10 +392,10 @@ test_doctor_fails_when_network_not_internal() {
 
 test_doctor_warns_on_git_auto_repository_detection() {
   healthy_host
-  linux_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  ide_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
   run_cli doctor
   assert_contains "$OUT" "git.autoRepositoryDetection"
-  linux_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\", \"git.autoRepositoryDetection\": false }"
+  ide_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\", \"git.autoRepositoryDetection\": false }"
   run_cli doctor
   assert_not_contains "$OUT" "git.autoRepositoryDetection"
 }
