@@ -361,7 +361,7 @@ creates its container (a few seconds); later sessions reuse it.
 | `claude-ide-box shell` | bash in this project's container, e.g. to run `claude` in a terminal |
 | `claude-ide-box forward 5173` | open a dev server from the container at `http://127.0.0.1:5173` |
 | `claude-ide-box profile python` | tools for this project (see [What runs in the box](#what-runs-in-the-box)) |
-| `claude-ide-box logs` | wrapper log and requests the proxy denied (`--all` for the full proxy log) |
+| `claude-ide-box logs` | wrapper log, requests the proxy denied, and a per-domain summary with the `allow`/`preset` command for each (`--all` for the full proxy log) |
 | `claude-ide-box allow example.org` | allow a domain (`.example.org` for subdomains too) |
 | `claude-ide-box up --recreate` | apply changed masks or settings now |
 | `claude-ide-box down` / `rm` | stop / remove this project's container (`rm --volume` also deletes history) |
@@ -594,7 +594,7 @@ auto-updater is disabled inside the container on purpose - versions change only 
 | `image claude-ide-box/base:latest not found` | run `claude-ide-box setup` |
 | `refusing to mount ...: it is the home directory` | the IDE has no folder open, or you opened `~`. Open a project folder. |
 | `container ... runs with an outdated configuration` | a session is still running in the old container; close it and run `claude-ide-box up --recreate` |
-| A domain Claude needs is blocked | `claude-ide-box logs` shows `TCP_DENIED` lines; `claude-ide-box allow <domain>` if you accept the risk |
+| A domain Claude needs is blocked | `claude-ide-box logs` lists denied domains, most frequent first, with the command that would allow each (a preset when one contains the domain); run it if you accept the risk. Bare IPs, plain HTTP and ports other than 443 are never allowed |
 | `network ... cannot be created` | `SUBNET` collides with an existing network; change `SUBNET` and `PROXY_IP` |
 | Extension works but `doctor` reports unguarded binaries | the extension updated; run `claude-ide-box guard` (the wrapper also does it on start) |
 | `useTerminal is true` in `doctor` | terminal mode ignores the wrapper - set `"claudeCode.useTerminal": false` |

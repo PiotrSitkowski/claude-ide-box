@@ -60,6 +60,10 @@ case "$cmd" in
     ;;
   logs)
     need_daemon
+    if [ -f "$dir/proxy.log" ]; then
+      cat "$dir/proxy.log"
+      exit 0
+    fi
     echo "1700000000.000 0 172.30.99.5 TCP_TUNNEL/200 5000 CONNECT api.anthropic.com:443 - HIER_DIRECT/1.2.3.4 -"
     echo "1700000001.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT example.com:443 - HIER_NONE/- text/html"
     echo "squid cache.log noise" >&2
