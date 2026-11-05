@@ -115,6 +115,9 @@ tests/integration/run.sh
 Optional environment: `CLAUDE_IDE_BOX_IT_PROFILES=php`, `CLAUDE_IDE_BOX_IT_KEEP=1` (keep containers for
 inspection), `CLAUDE_IDE_BOX_IT_BASE_IMAGE`, `CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE`,
 `CLAUDE_IDE_BOX_IT_BUILD_NETWORK`, `CLAUDE_IDE_BOX_IT_UPSTREAM_PROXY`, `CLAUDE_IDE_BOX_IT_SUBNET`.
+`CLAUDE_IDE_BOX_DOCKER=podman` runs the same suite against Podman (rootful as root, rootless as
+a user); the suite adds Podman-specific checks (a DNS-less internal network) and, as root, gives the
+test projects to UID 1000, the container user claude-ide-box uses for root.
 
 ## Not verified automatically
 
@@ -125,6 +128,10 @@ inspection), `CLAUDE_IDE_BOX_IT_BASE_IMAGE`, `CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE
 | Docker Desktop (macOS, Windows/WSL2) | no Docker Desktop in CI. Its VM, file sharing, ownership mapping and DNS layer differ from native Linux; in particular `inhibit_ipv4`, `--dns 127.0.0.1` on an internal network and bind-mounting a file over a project path need checking there |
 | Apple Silicon | images are multi-arch by construction (all bases are), not built on arm64 in CI |
 | macOS `ps`, `/bin/bash` 3.2 against real IDE settings paths | unit tests run on macOS but with fake extension and settings directories |
+| Rootless Podman end to end | the development sandbox has cgroup v1, where claude-ide-box refuses rootless Podman (checked against the real Podman there); its cgroup v2 path - `--userns=keep-id`, limits enforced - is covered by unit tests and a manual `keep-id` ownership check only |
+| Podman's proxy path on a host without Docker | in the development sandbox Docker's `FORWARD DROP` policy also drops traffic between containers on Podman bridges, so the project container could not reach squid there (failing closed); changing the firewall was not possible in that sandbox |
+| Podman machine (macOS, Windows) | not available in the sandbox; its VM is rootless Podman by default |
+| `quickstart` with a real terminal, `login` from it, and opening the settings file in a GUI editor | unit tests drive it through stdin |
 
 ## Manual checklist
 
