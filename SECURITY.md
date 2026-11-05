@@ -60,5 +60,9 @@ These are documented trade-offs, not vulnerabilities. Proposals to close them ar
 - **Masks are applied when a container is created.** A secret file that appears while a session is
   running is visible to that session until the container is recreated; the next start recreates it
   or refuses to run.
+- **Repositories created during a session.** A `.git` that Claude creates while the container runs
+  is writable until the next start (then it is mounted read-only). The host only runs git in it if
+  the IDE auto-detects sub-repositories, hence `"git.autoRepositoryDetection": false` in the
+  recommended settings; `doctor` warns without it.
 - **guard depends on the extension layout.** A new extension version is unguarded until the next
   wrapper start or `claude-box guard`; `doctor` reports it.

@@ -93,7 +93,9 @@ rest of your machine.
 |---|---|
 | read `~/.ssh`, `~/.aws`, `~/.gitconfig`, other projects, your home | only the project directory is mounted; home and `docker.sock` never are |
 | read `.env`, `.env.*` (and PrestaShop config with the preset) | bind-mounted over with an empty read-only file / empty tmpfs |
-| plant git hooks or IDE tasks | `.git`, `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer` are read-only |
+| plant git hooks or IDE tasks | `.git` (at every depth), `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer` are read-only |
+| unmask a secret by renaming or replacing it | masked paths are recorded with their inode; a moved or swapped one stops the next start |
+| smuggle mount options through file names | paths with commas, quotes or control characters stop the start instead of reaching `docker --mount` |
 | reach arbitrary hosts | no route out; the proxy allows only CONNECT :443 to listed domains |
 | exfiltrate over DNS | no resolver; the proxy resolves names, the container never does |
 | reach services on your host or LAN | internal network; the host has no address on that bridge |
@@ -109,6 +111,9 @@ rest of your machine.
 >   The `github` preset in particular lets anything with a token push data out.
 > - **Conversation history lives in the container's volume**, not in your `~/.claude`. Removing it
 >   (`claude-box rm --volume`) deletes that history.
+> - **A repository Claude creates mid-session is writable until the next start.** Then its `.git`
+>   becomes read-only. Until then, only the IDE setting `"git.autoRepositoryDetection": false`
+>   keeps the host from running git (hooks, `core.fsmonitor`) in it; `doctor` warns without it.
 > - **Containers of different projects share the internal network** and can reach each other's
 >   listening ports. Nothing listens by default; see [SECURITY.md](SECURITY.md#known-limitations).
 > - **The extension is trusted.** It runs on the host and renders what the container sends.
@@ -151,8 +156,11 @@ The reference platform is macOS 15 on Intel with Docker Desktop (see the manual 
    *Cursor* (`Cmd+Shift+P` → "Preferences: Open User Settings (JSON)") and add:
    ```jsonc
    "claudeCode.claudeProcessWrapper": "/Users/you/.local/share/claude-box/bin/claude-box-exec",
-   "claudeCode.useTerminal": false
+   "claudeCode.useTerminal": false,
+   "git.autoRepositoryDetection": false
    ```
+   The last line keeps the IDE from running git in sub-repositories Claude might create inside
+   the project - git hooks and `core.fsmonitor` from such a repository would run on the host.
 5. Route every installed extension version to the wrapper and check everything:
    ```bash
    claude-box guard && claude-box doctor
@@ -287,6 +295,8 @@ auto-updater is disabled inside the container on purpose - versions change only 
 | `network ... cannot be created` | `SUBNET` collides with an existing network; change `SUBNET` and `PROXY_IP` |
 | Extension works but `doctor` reports unguarded binaries | the extension updated; run `claude-box guard` (the wrapper also does it on start) |
 | `useTerminal is true` in `doctor` | terminal mode ignores the wrapper - set `"claudeCode.useTerminal": false` |
+| `masked path(s) were moved, replaced or deleted` | a masked file is not where it was when the container was created. If you did it, `claude-box up --recreate`; if not, find out what moved it before you do |
+| `... cannot be mounted safely` | a file or directory that has to be masked or made read-only has a comma, quote, tab or newline in its name; rename it |
 | Files created by Claude are owned by another user | the images were built for another UID; run `claude-box setup` as yourself. On Docker Desktop ownership is mapped to you regardless. |
 
 Set `CLAUDE_BOX_DEBUG=1` to mirror the wrapper log on stderr.
