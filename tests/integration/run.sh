@@ -449,6 +449,7 @@ rm -rf "$evil"
 
 echo "== ephemeral mode (up --try)"
 printf 'original\n' >"$PROJECT/try-me.txt"
+as_project_owner "$PROJECT/try-me.txt"
 if (cd "$PROJECT" && "$CLI" up --try) >"$WORK/try.log" 2>&1; then
   ok "up --try starts a container on a copy of the project"
   TNAME="$NAME-try"
