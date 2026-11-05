@@ -13,7 +13,7 @@ design where the two differ).
   `sed -i` without a suffix argument, `stat -c`, `date -d`, `readlink -f`.
 - `set -euo pipefail` in every script. `shellcheck` must pass; any disabled check carries a
   comment explaining why.
-- `bin/claude-box-exec` writes nothing to stdout except the stdout of the process in the
+- `bin/claude-ide-box-exec` writes nothing to stdout except the stdout of the process in the
   container. Diagnostics go to the log file and stderr.
 - Fail closed: every error path ends in a non-zero exit, never in running something on the host.
 

@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Fake docker CLI for unit tests. Records every call in $FAKE_DOCKER_DIR/calls
+# and emulates just enough behaviour for claude-ide-box. Deliberately prints noise
+# on stdout for commands whose output claude-ide-box must not forward.
+set -euo pipefail
+dir="${FAKE_DOCKER_DIR:?}"
+printf '%q ' "$@" >>"$dir/calls"
+printf '\n' >>"$dir/calls"
+
+daemon_up() { [ "${FAKE_DOCKER_DOWN:-0}" != "1" ]; }
+need_daemon() {
+  if ! daemon_up; then
+    echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2
+    exit 1
+  fi
+}
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  version)
+    need_daemon
+    echo "27.0.0"
+    ;;
+  info)
+    need_daemon
+    echo "${FAKE_NCPU:-8}"
+    ;;
+  image)
+    need_daemon
+    if [ "${FAKE_DOCKER_NO_IMAGE:-0}" = "1" ]; then
+      echo "Error: No such image" >&2
+      exit 1
+    fi
+    echo "sha256:${FAKE_IMAGE_ID:-1111}"
+    ;;
+  network)
+    need_daemon
+    case "${1:-}" in
+      inspect)
+        [ "${FAKE_NO_NETWORK:-0}" != "1" ] || { echo "Error: No such network" >&2; exit 1; }
+        case "$*" in
+          *--format*) echo "${FAKE_NETWORK_INFO:-true map[com.docker.network.bridge.inhibit_ipv4:true] 172.30.99.0/24}" ;;
+          *) echo '[]' ;;
+        esac
+        ;;
+      *) echo "net-id" ;;
+    esac
+    ;;
+  build)
+    need_daemon
+    echo "building..."
+    exit "${FAKE_BUILD_STATUS:-0}"
+    ;;
+  logs)
+    need_daemon
+    echo "1700000000.000 0 172.30.99.5 TCP_TUNNEL/200 5000 CONNECT api.anthropic.com:443 - HIER_DIRECT/1.2.3.4 -"
+    echo "1700000001.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT example.com:443 - HIER_NONE/- text/html"
+    echo "squid cache.log noise" >&2
+    # A startup line in the same second must not count as a finished reload.
+    echo "2026/11/05 17:07:12| Accepting HTTP Socket connections at conn2 local=0.0.0.0:3128" >&2
+    if [ "${FAKE_PROXY_STUCK:-0}" != "1" ]; then
+      echo "2026/11/05 17:07:13| Reconfiguring Squid Cache (version 5.7)..." >&2
+      echo "2026/11/05 17:07:13| Accepting HTTP Socket connections at conn33 local=0.0.0.0:3128" >&2
+    fi
+    ;;
+  stop | volume | ps | pull | kill)
+    need_daemon
+    echo "${FAKE_PS_OUTPUT:-ok}"
+    ;;
+  inspect)
+    need_daemon
+    if [ -f "$dir/state" ]; then
+      cat "$dir/state"
+    else
+      echo "Error: No such object" >&2
+      exit 1
+    fi
+    ;;
+  run)
+    need_daemon
+    case " $* " in
+      *" --rm "*)
+        # setup's home-ownership check of a freshly built profile image
+        printf '%s' "${FAKE_HOME_FOREIGN:-}"
+        exit 0
+        ;;
+    esac
+    printf '%s\n' "$@" >"$dir/run.args"
+    label=""
+    prev=""
+    for a in "$@"; do
+      if [ "$prev" = "--label" ]; then
+        case "$a" in io.claude-ide-box.config=*) label="${a#io.claude-ide-box.config=}" ;; esac
+      fi
+      prev="$a"
+    done
+    echo "true $label" >"$dir/state"
+    echo "0123456789abcdef-container-id"
+    ;;
+  start)
+    need_daemon
+    if [ -f "$dir/state" ]; then
+      read -r _ label <"$dir/state" || true
+      echo "true $label" >"$dir/state"
+    fi
+    echo "$1"
+    ;;
+  rm)
+    need_daemon
+    rm -f "$dir/state"
+    echo "removed"
+    ;;
+  exec)
+    need_daemon
+    envnames=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -i | -t | -it) shift ;;
+        -w | --workdir) printf '%s\n' "$2" >"$dir/exec.workdir"; shift 2 ;;
+        -e | --env) envnames="$envnames $2"; shift 2 ;;
+        -u | --user) shift 2 ;;
+        -*) shift ;;
+        *) break ;;
+      esac
+    done
+    name="$1"
+    shift
+    if [ "${1:-}" = "ps" ]; then
+      case "${FAKE_BUSY:-0}" in
+        1) printf 'sleep infinity\nclaude --output-format stream-json\n' ;;
+        exe) printf 'sleep infinity\n/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe --verbose\n' ;;
+        *) printf 'sleep infinity\nbash\n' ;;
+      esac
+      exit 0
+    fi
+    if [ "${1:-}" = "sh" ] && printf '%s' "$*" | grep -q socat; then
+      # forward: behave like a tiny echo service behind socat
+      printf '%s\n' "$*" >"$dir/forward.cmd"
+      printf 'FWD:'
+      head -c 5
+      exit 0
+    fi
+    printf '%s\n' "$name" >"$dir/exec.name"
+    printf '%s\n' "$@" >"$dir/exec.args"
+    : >"$dir/exec.env"
+    for n in $envnames; do
+      printf '%s=%s\n' "$n" "${!n-<unset>}" >>"$dir/exec.env"
+    done
+    if [ ! -t 0 ]; then
+      cat >"$dir/exec.stdin"
+    fi
+    echo "FAKE-STDOUT"
+    echo "fake-stderr" >&2
+    exit "${FAKE_EXEC_STATUS:-0}"
+    ;;
+  *)
+    need_daemon
+    echo "fake docker: unhandled command $cmd" >&2
+    ;;
+esac

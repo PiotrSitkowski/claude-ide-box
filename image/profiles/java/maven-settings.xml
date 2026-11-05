@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Global Maven settings for claude-ide-box: all traffic goes through the
+     egress proxy (the "egress-proxy" host entry every container gets). -->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+  <localRepository>/home/claude/.m2/repository</localRepository>
+  <proxies>
+    <proxy>
+      <id>claude-ide-box-https</id>
+      <active>true</active>
+      <protocol>https</protocol>
+      <host>egress-proxy</host>
+      <port>3128</port>
+      <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts>
+    </proxy>
+    <proxy>
+      <id>claude-ide-box-http</id>
+      <active>true</active>
+      <protocol>http</protocol>
+      <host>egress-proxy</host>
+      <port>3128</port>
+      <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts>
+    </proxy>
+  </proxies>
+</settings>

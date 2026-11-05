@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# claude-ide-box-exec - drop-in replacement for the `claude` binary that runs
+# Claude Code inside the project's claude-ide-box container.
+#
+# Set it as "claudeCode.claudeProcessWrapper" in the IDE's USER settings.
+# The extension calls it as:  claude-ide-box-exec [<bundled binary>] <claude args>
+# `claude-ide-box guard` also symlinks the extension's bundled binary to this file,
+# so it is reached even if the extension ignores the wrapper setting.
+#
+# Contract:
+#   - stdout carries nothing but the stdout of `claude` in the container;
+#   - diagnostics go to $XDG_STATE_HOME/claude-ide-box/wrapper.log and stderr;
+#   - every failure exits non-zero; nothing is ever executed on the host
+#     except the docker CLI.
+set -euo pipefail
+
+# Keep the real stdout on fd 3 and point fd 1 at nothing until the final exec,
+# so no helper can leak a byte to the IDE by accident.
+exec 3>&1 1>/dev/null
+
+# Resolve our own location through any symlink chain (guard symlinks, the
+# ~/.local/bin link) without `readlink -f`.
+self="$0"
+n=0
+while [ -L "$self" ]; do
+  n=$((n + 1))
+  [ "$n" -le 40 ] || { echo "claude-ide-box: symlink loop at $0" >&2; exit 1; }
+  link="$(readlink "$self")"
+  case "$link" in
+    /*) self="$link" ;;
+    *) self="$(dirname "$self")/$link" ;;
+  esac
+done
+CB_SELF="$(cd -P "$(dirname "$self")" && pwd -P)/$(basename "$self")"
+CB_ROOT="$(dirname "$(dirname "$CB_SELF")")"
+CB_LIB="$CB_ROOT/lib/claude-ide-box"
+if [ ! -f "$CB_LIB/common.sh" ]; then
+  echo "claude-ide-box: cannot find $CB_LIB/common.sh (broken installation)" >&2
+  exit 1
+fi
+# shellcheck source=lib/claude-ide-box/common.sh
+. "$CB_LIB/common.sh"
+# shellcheck source=lib/claude-ide-box/guard.sh
+. "$CB_LIB/guard.sh"
+
+cb_init_paths
+cb_init_state
+
+# ---------------------------------------------------------------------------
+# 1. Log the invocation: date, PWD, full arguments, environment NAMES.
+# ---------------------------------------------------------------------------
+cb_log "---- claude-ide-box-exec $CB_VERSION invoked as $0"
+cb_log "pwd: ${PWD:-?}"
+cb_log "argv: $(cb_quote_args "$@")"
+cb_log "env names: $(compgen -e | tr '\n' ' ')"
+
+# ---------------------------------------------------------------------------
+# 2. Drop leading path arguments: the extension passes its bundled binary
+#    (one path) or nothing; other SDK hosts may pass interpreter + script.
+#    Subcommands (e.g. "worktree") and prompts are not paths and are kept.
+# ---------------------------------------------------------------------------
+is_leading_path() {
+  case "$1" in
+    node | bun | deno | claude) return 0 ;;
+    -*) return 1 ;;
+    *[[:space:]]*) return 1 ;;
+    /*)
+      if [ -f "$1" ]; then
+        return 0
+      fi
+      # An absolute path that no longer exists (e.g. a removed extension
+      # version) but clearly names a binary or script.
+      case "$1" in
+        */claude | */claude.exe | *.js | *.cjs | *.mjs | */node | */bun) return 0 ;;
+      esac
+      ;;
+    ./* | ../*) [ -f "$1" ] && return 0 ;;
+  esac
+  return 1
+}
+stripped=0
+while [ $# -gt 0 ] && [ "$stripped" -lt 3 ] && is_leading_path "$1"; do
+  cb_log "dropping leading path argument: $1"
+  shift
+  stripped=$((stripped + 1))
+done
+
+# ---------------------------------------------------------------------------
+# 3. Project directory = PWD at launch. Validated before anything else runs.
+# ---------------------------------------------------------------------------
+project="${PWD:-}"
+if [ -z "$project" ] || [ ! -d "$project" ]; then
+  project="$(pwd -P)"
+fi
+cb_set_project "$project"
+cb_load_config
+
+# ---------------------------------------------------------------------------
+# 4. Flags carrying host paths. The container only sees the project, so a
+#    path outside it cannot work there; it is dropped with a warning instead
+#    of mounting more of the host. Inline JSON values are kept.
+# ---------------------------------------------------------------------------
+# keep_path FLAG VALUE - true when VALUE may be passed on; warns otherwise.
+keep_path() {
+  case "$2" in
+    "" | "{"* | "["*) return 0 ;;
+  esac
+  if cb_path_inside "$CB_PROJECT_DIR" "$2"; then
+    return 0
+  fi
+  cb_warn "dropping $1 $2: host path outside the project is not available in the container"
+  return 1
+}
+
+args=()
+while [ $# -gt 0 ]; do
+  arg="$1"
+  shift
+  case "$arg" in
+    --mcp-config=* | --settings=* | --plugin-dir=* | --add-dir=* | --debug-file=* | \
+      --system-prompt-file=* | --append-system-prompt-file=*)
+      if keep_path "${arg%%=*}" "${arg#*=}"; then
+        args+=("$arg")
+      fi
+      ;;
+    --mcp-config | --add-dir)
+      # variadic: consume values up to the next flag
+      kept=()
+      while [ $# -gt 0 ]; do
+        case "$1" in -*) break ;; esac
+        if keep_path "$arg" "$1"; then
+          kept+=("$1")
+        fi
+        shift
+      done
+      if [ ${#kept[@]} -gt 0 ]; then
+        args+=("$arg" "${kept[@]}")
+      fi
+      ;;
+    --settings | --plugin-dir | --debug-file | --system-prompt-file | --append-system-prompt-file)
+      if [ $# -eq 0 ]; then
+        args+=("$arg")
+      else
+        if keep_path "$arg" "$1"; then
+          args+=("$arg" "$1")
+        fi
+        shift
+      fi
+      ;;
+    *) args+=("$arg") ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# 5. Defence against extension regressions: (re)guard bundled binaries of
+#    newly installed extension versions. Never fatal, never on stdout.
+# ---------------------------------------------------------------------------
+if [ "$CFG_AUTO_GUARD" = "1" ]; then
+  (cb_guard_apply "$CB_SELF" quiet) >>"${CB_LOG_FILE:-/dev/null}" 2>&1 || cb_log "guard: failed (ignored)"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Docker: locate it, make sure the container is up. Fail closed.
+# ---------------------------------------------------------------------------
+cb_find_docker
+cb_ensure_container
+
+# ---------------------------------------------------------------------------
+# 7. Environment for the container: names only on the command line; docker
+#    reads the values from our environment, so they never show up in `ps`.
+# ---------------------------------------------------------------------------
+cb_export_token
+env_names="$(cb_env_passthrough)"
+env_args=()
+for name in $env_names; do
+  env_args+=(-e "$name")
+done
+cb_log "passing env: $(printf '%s' "$env_names" | tr '\n' ' ')"
+
+tty_args=(-i)
+if [ -t 0 ] && [ -t 3 ]; then
+  tty_args=(-i -t)
+fi
+
+cb_log "exec: docker exec ${tty_args[*]} -w $(printf '%q' "$CB_PROJECT_DIR") <env> $CB_NAME claude $(cb_quote_args ${args[@]+"${args[@]}"})"
+exec 1>&3 3>&-
+exec "$CB_DOCKER" exec "${tty_args[@]}" -w "$CB_PROJECT_DIR" ${env_args[@]+"${env_args[@]}"} \
+  "$CB_NAME" claude ${args[@]+"${args[@]}"}

@@ -1,0 +1,4 @@
+# Composer and Packagist
+packagist.org
+repo.packagist.org
+getcomposer.org
