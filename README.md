@@ -37,8 +37,9 @@ relying on it.
 
 - [How it works](#how-it-works)
 - [Threat model](#threat-model)
-- [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows with WSL2](#windows-with-wsl2)
+- [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows with WSL2](#windows-with-wsl2) · [Podman and rootless engines](#podman-and-rootless-engines)
 - [Daily use](#daily-use)
+- [Trying changes on a copy](#trying-changes-on-a-copy-up---try)
 - [What runs in the box](#what-runs-in-the-box) - [dev servers](#dev-servers-react-vite-next-django-) · [office documents](#office-documents)
 - [Modules](#modules)
 - [Network allowlist](#network-allowlist)
@@ -76,7 +77,7 @@ sequenceDiagram
 | Piece | What it does |
 |---|---|
 | `bin/claude-ide-box-exec` | The wrapper the extension runs. Writes nothing to stdout but the container's stdout, logs to `~/.local/state/claude-ide-box/wrapper.log`, never executes anything on the host except `docker`. |
-| `bin/claude-ide-box` | Management CLI: `setup`, `login`, `up`, `down`, `rm`, `shell`, `status`, `logs`, `allow`, `preset`, `guard`, `doctor`. |
+| `bin/claude-ide-box` | Management CLI: `quickstart`, `setup`, `login`, `up` (`--try`), `try`, `down`, `rm`, `shell`, `status`, `logs`, `allow`, `preset`, `guard`, `doctor`. |
 | `image/` | Debian bookworm + Node 22 + a pinned Claude Code. Non-root user with your UID/GID, no sudo. Optional language profiles (`php` ships). |
 | `proxy/` | squid as an unprivileged user: CONNECT to port 443 of allowlisted domains only, no cache, every denial logged. |
 | Networks | `claude-ide-box-internal` (`--internal`, no route out, host gets no address on it) and `claude-ide-box-egress` (only the proxy is on it). |
@@ -99,7 +100,7 @@ rest of your machine.
 | Inside the container, Claude **cannot** | How |
 |---|---|
 | read `~/.ssh`, `~/.aws`, `~/.gitconfig`, other projects, your home | only the project directory is mounted; home and `docker.sock` never are |
-| read `.env`, `.env.*` (and PrestaShop config with the preset) | bind-mounted over with an empty read-only file / empty tmpfs |
+| read `.env`, `.env.*` (and PrestaShop config with the preset) | bind-mounted over with an empty read-only file / empty tmpfs. Committed templates - `.env.example`, `.env.sample`, `.env.template`, `.env.dist` - stay visible (`MASK_EXCEPT`) |
 | plant git hooks or IDE tasks | `.git` (at every depth), `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer` are read-only |
 | unmask a secret by renaming or replacing it | masked paths are recorded with their inode; a moved or swapped one stops the next start |
 | smuggle mount options through file names | paths with commas, quotes or control characters stop the start instead of reaching `docker --mount` |
@@ -143,6 +144,20 @@ cd claude-ide-box && ./install.sh
 `install.sh` copies the scripts to `~/.local/share/claude-ide-box`, links `claude-ide-box` and
 `claude-ide-box-exec` into `~/.local/bin`, needs no root, and is safe to re-run. It prints the exact
 settings snippet for your machine.
+
+The shortest way from there is the guided first run:
+
+```bash
+claude-ide-box quickstart
+```
+
+It checks Docker, asks which [profiles](#what-runs-in-the-box) to build and runs `setup`, signs
+you in (subscription, an existing token, or an explanation of how to use an API key), runs
+`guard`, prints the settings snippet for every IDE it finds, and ends with `doctor`. A settings
+file is written only when it does not exist yet or is empty (`{}`); an existing one is JSONC
+with your comments and is never rewritten by a script - quickstart shows what to add and offers to
+open it in `$VISUAL`/`$EDITOR` (or the system text editor). A failing step stops the run; running
+it again only offers the steps that are already done. The manual steps per platform follow.
 
 ### macOS
 
@@ -201,6 +216,29 @@ places (`/usr/local/bin`, `/opt/homebrew/bin`, `~/.docker/bin`, Docker.app) and 
    (`%APPDATA%\Code\User\settings.json`) and, if your IDE applies machine settings remotely, in
    `~/.vscode-server/data/Machine/settings.json`. `claude-ide-box doctor` checks both.
 
+### Podman and rootless engines
+
+claude-ide-box drives Docker by default. Podman 4 or newer works as well; it is used when it is the
+only engine installed, or when you set `CLAUDE_IDE_BOX_DOCKER=podman` (in the environment the IDE
+starts with, and for the CLI). Every engine must give the same guarantees, so claude-ide-box checks
+the engine before it creates anything and refuses one that cannot, instead of starting a weaker
+sandbox:
+
+| Engine | Supported | What differs |
+|---|---|---|
+| Docker Engine (rootful), Docker Desktop | yes | the reference |
+| Podman, rootful (netavark) | yes | the internal network is created without DNS: netavark then gives the host no address on its bridge (Docker's `inhibit_ipv4`), and Podman honours `--dns 127.0.0.1` only on such a network. Containers get `--read-only-tmpfs=false` plus a tmpfs on `/dev/shm` (the same writable paths as Docker), `--http-proxy=false` (no proxy variables copied from the host), and masked directories are mounted with `notmpcopyup` - by default Podman copies what is under a tmpfs mount into it, which would put the masked secrets right back |
+| Podman, rootless | yes, on cgroup v2 with the `cpu`, `memory` and `pids` controllers delegated to your user | as rootful, plus `--userns=keep-id` so the container user is you and project files keep your ownership. On cgroup v1 Podman ignores `--memory`, `--cpus` and `--pids-limit` with only a warning: refused |
+| Podman with the CNI network backend | no | CNI gives internal networks a gateway address on the host |
+| Docker, rootless | no | only container root maps to your user, so the non-root container user cannot write the project; running it as root would drop the non-root guarantee. On cgroup v1 it also ignores the limits silently. Use rootless Podman instead |
+| Any Docker engine that reports `MemoryLimit`, `PidsLimit` or `CPUCfsQuota` as false | no | the limits would be ignored |
+
+`claude-ide-box doctor` names the engine and the reason for a refusal. If a host runs both Docker
+and rootful Podman, Docker's `FORWARD DROP` policy also drops traffic between containers on a
+Podman bridge (with `br_netfilter` loaded), so project containers cannot reach the proxy: that fails
+closed, and is fixed by an `ACCEPT` rule for the internal bridge in the `DOCKER-USER` chain or by
+not running both engines.
+
 ## Daily use
 
 Open a project folder in the IDE and use the Claude Code panel. The first message in a new project
@@ -212,9 +250,10 @@ creates its container (a few seconds); later sessions reuse it.
 | `claude-ide-box shell` | bash in this project's container, e.g. to run `claude` in a terminal |
 | `claude-ide-box forward 5173` | open a dev server from the container at `http://127.0.0.1:5173` |
 | `claude-ide-box profile python` | tools for this project (see [What runs in the box](#what-runs-in-the-box)) |
-| `claude-ide-box logs` | wrapper log and requests the proxy denied (`--all` for the full proxy log) |
+| `claude-ide-box logs` | wrapper log, requests the proxy denied, and a per-domain summary with the `allow`/`preset` command for each (`--all` for the full proxy log) |
 | `claude-ide-box allow example.org` | allow a domain (`.example.org` for subdomains too) |
 | `claude-ide-box up --recreate` | apply changed masks or settings now |
+| `claude-ide-box up --try` | let Claude work on a throw-away copy; `try diff`, then `try apply` or `try discard` (`try end` asks) |
 | `claude-ide-box down` / `rm` | stop / remove this project's container (`rm --volume` also deletes history) |
 | `claude-ide-box doctor` | check the whole setup; non-zero exit on any failure |
 
@@ -222,6 +261,54 @@ creates its container (a few seconds); later sessions reuse it.
 > When a new secret file (say `.env.local`) appears on the host, the next session recreates the
 > container so the file is masked. If a session is still running in the old container, the wrapper
 > refuses to start a new one and tells you to run `claude-ide-box up --recreate`.
+
+## Trying changes on a copy (`up --try`)
+
+```bash
+claude-ide-box up --try
+```
+
+copies the project and starts a separate container for it. The copy is mounted at the project's
+own path, so the IDE panel works as usual and every path it sends stays valid, but Claude's edits
+land in the copy, not in your files - the editor keeps showing your files. When Claude is done:
+
+| Command | |
+|---|---|
+| `claude-ide-box try` | state of the session and a count of changes |
+| `claude-ide-box try diff` | every changed path, and a unified diff of each changed file |
+| `claude-ide-box try apply` | write the changes into the project and end the session |
+| `claude-ide-box try discard` | throw the copy away; the project stays as it was |
+| `claude-ide-box try end` | show the diff, then ask: apply, discard or keep going |
+
+While a session is active, every new IDE session of the project uses the copy's container
+(`up --try` again resumes it). The copy, plus a snapshot of the project taken at the same moment,
+live in `~/.cache/claude-ide-box/try/` (`XDG_CACHE_HOME`): a full copy, twice, so mind large
+`node_modules` or build directories. A plain copy was chosen over the alternatives: an overlay
+filesystem needs privileges the container must not have (and does not exist on macOS hosts), and a
+git worktree leaves out untracked and ignored files and needs the main repository's `.git`.
+
+**What the container gets is unchanged.** The same masks and read-only paths are applied to the
+copy, the same network, limits and engine checks to the container, and its home volume is separate
+and removed with the session. Masked files (`.env` and the rest, including files they link to) are
+emptied in the copy, so the secrets are not duplicated on disk at all.
+
+**Applying runs nothing from the project.** `try apply` and `try diff` first remove the session's
+container, so nothing can change the copy while it is read, and then only compare and copy files
+(`cmp`, `diff`, `cp`, `mv`, `ln`, `rm`, `mkdir`, `rmdir`) - no `git`, `patch` or hooks. They never:
+
+- write a masked path, a read-only path (`.git`, `.vscode`, `.idea`, ...) or anything inside a
+  `.git` directory at any depth - commits made in the copy are not applied, only files;
+- follow a symlink: links are applied as links, and a path whose directory in the copy was replaced
+  by a link (which could point at a host directory) is not read at all;
+- write through a directory of the project that leads out of it, or apply special files (FIFOs,
+  sockets);
+- remove a directory that still holds files.
+
+**Conflicts.** A path that Claude changed and that you also changed, differently, since the copy
+was made is a conflict. `try apply` then writes nothing and lists them; resolve them by hand
+(Claude's versions are in the copy) or run `try apply --skip-conflicts` to apply everything else
+and keep the copy for the rest. A change you made that Claude did not touch is always kept.
+Executable bits are applied; other permission changes are not.
 
 ## What runs in the box
 
@@ -359,6 +446,7 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `CLAUDE_CODE_VERSION` | `2.1.318` | pinned Claude Code version |
 | `PROFILE` * | `base` | image profiles, e.g. `python java` (or use `claude-ide-box profile`) |
 | `MASK` * | | extra mask patterns; a name (`secrets.json`) matches at any depth, a path (`config/db.yml`) is anchored at the project root |
+| `MASK_EXCEPT` * | `.env.example .env.sample .env.template .env.dist` | names (globs allowed, no `/`) left visible although `.env.*` matches them. Applies to the default patterns only: a name listed in `MASK` or a mask preset is always masked. Set it to `""` to mask templates too, or put a template in `MASK` if it holds real values |
 | `MASK_PRESETS` * | | `prestashop` |
 | `READONLY` * | | extra read-only paths, e.g. `.husky .envrc` |
 | `GIT_WRITABLE` * | `0` | `1` lets Claude commit (it can then also write `.git/hooks`) |
@@ -368,6 +456,9 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `PROXY_PRESETS` | | e.g. `python go` (or use `claude-ide-box preset`) |
 | `UPSTREAM_PROXY` | | `host:port` of a corporate proxy squid should forward to |
 | `AUTO_GUARD` | `1` | re-run `guard` on every wrapper start |
+
+The environment variable `CLAUDE_IDE_BOX_DOCKER` selects the engine CLI (`docker`, `podman` or a
+full path); see [Podman and rootless engines](#podman-and-rootless-engines).
 
 \* can be overridden per project. The full list is in [`lib/claude-ide-box/common.sh`](lib/claude-ide-box/common.sh)
 (`cb_config_defaults`).
@@ -390,7 +481,7 @@ auto-updater is disabled inside the container on purpose - versions change only 
 | `image claude-ide-box/base:latest not found` | run `claude-ide-box setup` |
 | `refusing to mount ...: it is the home directory` | the IDE has no folder open, or you opened `~`. Open a project folder. |
 | `container ... runs with an outdated configuration` | a session is still running in the old container; close it and run `claude-ide-box up --recreate` |
-| A domain Claude needs is blocked | `claude-ide-box logs` shows `TCP_DENIED` lines; `claude-ide-box allow <domain>` if you accept the risk |
+| A domain Claude needs is blocked | `claude-ide-box logs` lists denied domains, most frequent first, with the command that would allow each (a preset when one contains the domain); run it if you accept the risk. Bare IPs, plain HTTP and ports other than 443 are never allowed |
 | `network ... cannot be created` | `SUBNET` collides with an existing network; change `SUBNET` and `PROXY_IP` |
 | Extension works but `doctor` reports unguarded binaries | the extension updated; run `claude-ide-box guard` (the wrapper also does it on start) |
 | `useTerminal is true` in `doctor` | terminal mode ignores the wrapper - set `"claudeCode.useTerminal": false` |
