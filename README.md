@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/PiotrSitkowski/claude-box/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PiotrSitkowski/claude-box/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-0f766e"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0f766e"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/hosts-macOS%20%C2%B7%20Linux%20%C2%B7%20WSL2-4338ca">
   <img alt="Shell" src="https://img.shields.io/badge/bash-3.2%2B-59636e">
 </p>
@@ -333,4 +333,5 @@ tests/integration/run.sh
 
 ## License
 
-[MIT](LICENSE) © Piotr Sitkowski
+[Apache License 2.0](LICENSE) - free for anyone to use, modify and distribute, including
+commercially. Copyright 2026 Piotr Sitkowski; see [NOTICE](NOTICE).

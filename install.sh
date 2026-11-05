@@ -47,7 +47,7 @@ do_install() {
   rm -rf "$share.new"
   mkdir -p "$share.new"
   cp -R "$src/bin" "$src/lib" "$src/image" "$src/proxy" "$share.new/"
-  cp "$src/LICENSE" "$share.new/" 2>/dev/null || true
+  cp "$src/LICENSE" "$src/NOTICE" "$share.new/" 2>/dev/null || true
   chmod 755 "$share.new/bin/"* "$share.new/proxy/entrypoint.sh" "$share.new/image/create-user.sh"
   # Swap directories; a wrapper that is running keeps reading the old inode.
   rm -rf "$share.old"
