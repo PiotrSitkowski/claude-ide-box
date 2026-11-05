@@ -271,8 +271,12 @@ done
 in_box "touch /dev/shm/probe" >/dev/null 2>&1 && ok "/dev/shm is writable (as on Docker)" || not_ok "/dev/shm is writable"
 
 echo "== engine: $ENGINE"
+# Docker always lists its embedded resolver on user networks; with
+# --dns 127.0.0.1 it forwards nothing upstream (checked under (b)).
+want=127.0.0.1
+[ "$ENGINE" = podman ] || want=127.0.0.11
 v="$(in_box "grep '^nameserver' /etc/resolv.conf" 2>&1 || true)"
-[ "$v" = "nameserver 127.0.0.1" ] && ok "the only resolver is 127.0.0.1" || not_ok "the only resolver is 127.0.0.1" "$v"
+[ "$v" = "nameserver $want" ] && ok "the only resolver is $want" || not_ok "the only resolver is $want" "$v"
 if [ "$ENGINE" = podman ]; then
   v="$("$DOCKER" network inspect --format '{{.Internal}} {{.DNSEnabled}}' cbit-internal 2>&1)"
   [ "$v" = "true false" ] && ok "Podman internal network has no DNS (so no host address on its bridge)" ||
