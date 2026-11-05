@@ -36,7 +36,7 @@ dependency to install on every runner for no extra coverage.
 |---|---|
 | Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 123 passed, 0 failed |
 | `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 123 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image) |
-| CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 121 passed, 0 failed in each (run 18, commit `f082f17`) |
+| CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
 commit as the code, but were run red before the implementation existed (35 of 39 wrapper tests and
@@ -91,16 +91,17 @@ The `php` and `rust` profiles were **not** built there: `php` needs Debian packa
 the sandbox cannot reach, and `rustup` in the rust build stage does not trust the sandbox's TLS
 interception CA.
 
-**CI (ubuntu-latest) - 75 passed, 0 failed, 0 skipped** (run 18, commit `f082f17`): the same suite
+**CI (ubuntu-latest) - 77 passed, 0 failed, 0 skipped** (run 22, commit `49e5465`): the same suite
 with the real Debian-based images, direct egress and all six profiles - `php` (PHP 8.3.36),
 `python`, `go`, `rust`, `java`, `office` - each downloading its packages through the proxy without
-DNS. That run did not execute the combined-profile check: a `case` pattern with overlapping spaces
-never matched, so the check was silently skipped. It now runs through the user's flow
-(`profile python go`, `setup`, start) and passes in the sandbox; the next CI run includes it.
+DNS, plus `go` and `python` combined in one container through the user's flow (`profile python go`,
+`setup`, start). An earlier run (75 passed) had silently skipped that combined check because of a
+`case` pattern with overlapping spaces; it now runs.
 
 Earlier CI runs caught things this sandbox could not: the IDE settings path on macOS in the doctor
-tests, the squid reload failing on Debian's squid 5.7, a shellcheck 0.11 warning, and the `forward`
-message appearing before its socket listened.
+tests, the squid reload failing on Debian's squid 5.7, a shellcheck 0.11 warning, the `forward`
+message appearing before its socket listened, and a lock race in which a waiter could remove a live
+lock whose holder had not written its pid yet (now reproduced deterministically by a unit test).
 
 ### Running them yourself
 
