@@ -586,3 +586,96 @@ test_abandoned_lock_without_pid_is_reaped() {
   assert_status 0 "$STATUS"
   assert_contains "$(cat "$HOME/.local/state/claude-ide-box/wrapper.log")" "without a pid file"
 }
+
+# --- template files next to .env ------------------------------------------------
+
+project_conf() {
+  mkdir -p "$HOME/.config/claude-ide-box/projects"
+  printf '%s\n' "$@" >"$HOME/.config/claude-ide-box/projects/claude-ide-box-my-project-$(sha8 "$PROJECT").conf"
+}
+
+test_env_templates_are_not_masked_by_default() {
+  local f
+  for f in .env .env.local .env.example .env.sample .env.template .env.dist; do
+    echo "X=1" >"$PROJECT/$f"
+  done
+  mkdir -p "$PROJECT/api"
+  : >"$PROJECT/api/.env.example"
+  : >"$PROJECT/api/.env.production"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  local a
+  a="$(run_args)"
+  assert_contains "$a" "dst=$PROJECT/.env,readonly"
+  assert_contains "$a" "dst=$PROJECT/.env.local,readonly"
+  assert_contains "$a" "dst=$PROJECT/api/.env.production,readonly"
+  for f in .env.example .env.sample .env.template .env.dist api/.env.example; do
+    assert_not_contains "$a" "dst=$PROJECT/$f," "$f is a template and must stay visible"
+  done
+}
+
+test_env_template_can_be_masked_with_mask() {
+  : >"$PROJECT/.env.example"
+  : >"$PROJECT/.env.dist"
+  project_conf 'MASK=".env.example"'
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_contains "$(run_args)" "dst=$PROJECT/.env.example,readonly"
+  assert_not_contains "$(run_args)" "dst=$PROJECT/.env.dist,"
+}
+
+test_env_template_exceptions_are_configurable() {
+  : >"$PROJECT/.env.example"
+  : >"$PROJECT/.env.dist"
+  project_conf 'MASK_EXCEPT=".env.dist"'
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_contains "$(run_args)" "dst=$PROJECT/.env.example,readonly"
+  assert_not_contains "$(run_args)" "dst=$PROJECT/.env.dist,"
+}
+
+test_mask_except_must_be_names() {
+  project_conf 'MASK_EXCEPT="config/.env.example"'
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "MASK_EXCEPT"
+}
+
+test_mask_except_does_not_unmask_presets_or_mask() {
+  # An exception only narrows the default patterns.
+  mkdir -p "$PROJECT/app/config"
+  : >"$PROJECT/app/config/parameters.php"
+  : >"$PROJECT/secrets.json"
+  project_conf 'MASK_PRESETS="prestashop"' 'MASK="secrets.json"' 'MASK_EXCEPT="parameters.php secrets.json"'
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_contains "$(run_args)" "dst=$PROJECT/app/config/parameters.php,readonly"
+  assert_contains "$(run_args)" "dst=$PROJECT/secrets.json,readonly"
+}
+
+test_previously_masked_template_does_not_trip_the_mask_record() {
+  # A container created by an older version masked .env.example. After the
+  # upgrade the template is no longer masked; that is a configuration change,
+  # not a moved secret, and must not stop the start.
+  echo 'SECRET=1' >"$PROJECT/.env"
+  echo 'X=' >"$PROJECT/.env.example"
+  project_conf 'MASK_EXCEPT=""'
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_contains "$(run_args)" "dst=$PROJECT/.env.example,readonly"
+  project_conf ''
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_not_contains "$(run_args)" "dst=$PROJECT/.env.example,"
+  assert_contains "$(run_args)" "dst=$PROJECT/.env,readonly"
+  # The template is no longer protected by the record, the secret still is.
+  mv "$PROJECT/.env.example" "$PROJECT/env.example"
+  rm -f "$FAKE_DOCKER_DIR/state"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  mkdir -p "$PROJECT/moved" && mv "$PROJECT/.env" "$PROJECT/moved/x"
+  rm -f "$FAKE_DOCKER_DIR/state"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "$PROJECT/.env"
+}

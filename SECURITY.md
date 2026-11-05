@@ -29,7 +29,7 @@ do one of these:
 |---|---|
 | execute code on the host | through the wrapper, the CLI, `guard`, `install.sh`, or anything Claude IDE Box itself runs on the host |
 | read host data outside the project | home directory, `~/.ssh`, other projects, the token file |
-| read a masked file | `.env`, `.env.*`, configured masks |
+| read a masked file | `.env`, `.env.*` (except the committed templates in `MASK_EXCEPT`), configured masks |
 | write a read-only path | `.git`, `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer`, configured entries |
 | reach the network beyond the allowlist | other domains, other ports, bare IPs, DNS, host or LAN services |
 | change the sandbox configuration | anything under `~/.config/claude-ide-box`, the proxy allowlist |

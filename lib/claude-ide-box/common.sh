@@ -196,12 +196,12 @@ cb_quote_args() {
 
 CB_CONFIG_KEYS="SUBNET PROXY_IP UPSTREAM_PROXY PROXY_PRESETS PROFILE BUILD_PROFILES
 CLAUDE_CODE_VERSION BASE_IMAGE PROXY_BASE_IMAGE BUILD_NETWORK MEMORY CPUS PIDS_LIMIT
-TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS READONLY_DEFAULTS READONLY GIT_WRITABLE
+TMP_SIZE MASK_DEFAULTS MASK_EXCEPT MASK MASK_PRESETS READONLY_DEFAULTS READONLY GIT_WRITABLE
 NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS AUTO_GUARD CONTAINER_UID CONTAINER_GID
 EXTENSION_DIRS"
 
 # Keys a per-project file may override. Network and build settings are global.
-CB_PROJECT_KEYS="PROFILE MEMORY CPUS PIDS_LIMIT TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS
+CB_PROJECT_KEYS="PROFILE MEMORY CPUS PIDS_LIMIT TMP_SIZE MASK_DEFAULTS MASK_EXCEPT MASK MASK_PRESETS
 READONLY_DEFAULTS READONLY GIT_WRITABLE NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS"
 
 cb_config_defaults() {
@@ -220,6 +220,9 @@ cb_config_defaults() {
   CFG_PIDS_LIMIT="512"
   CFG_TMP_SIZE="1g"
   CFG_MASK_DEFAULTS=".env .env.*"
+  # Committed templates that .env.* would otherwise hide. They only narrow
+  # MASK_DEFAULTS; MASK and mask presets still mask them.
+  CFG_MASK_EXCEPT=".env.example .env.sample .env.template .env.dist"
   CFG_MASK=""
   CFG_MASK_PRESETS=""
   CFG_READONLY_DEFAULTS=".git .vscode .agent .agents .idea .devcontainer"
@@ -304,6 +307,9 @@ cb_validate_config() {
   printf '%s\n' "$CFG_CPUS" | grep -Eq '^[0-9]+(\.[0-9]+)?$' || cb_die "invalid CPUS '$CFG_CPUS'"
   case "$CFG_CONTAINER_UID$CFG_CONTAINER_GID" in
     *[!0-9]*) cb_die "CONTAINER_UID and CONTAINER_GID must be numeric" ;;
+  esac
+  case "$CFG_MASK_EXCEPT" in
+    */*) cb_die "MASK_EXCEPT takes file names, not paths ('$CFG_MASK_EXCEPT')" ;;
   esac
   case "$CFG_GIT_WRITABLE$CFG_NONESSENTIAL_TRAFFIC$CFG_CLAUDEAI_CONNECTORS$CFG_AUTO_GUARD" in
     *[!01]*) cb_die "GIT_WRITABLE, NONESSENTIAL_TRAFFIC, CLAUDEAI_CONNECTORS and AUTO_GUARD must be 0 or 1" ;;
@@ -643,12 +649,28 @@ cb_mask_preset_patterns() {
   esac
 }
 
-cb_mask_patterns() {
-  local p out="$CFG_MASK_DEFAULTS $CFG_MASK"
+# Patterns the user asked for explicitly (MASK, mask presets). Exceptions
+# never apply to these.
+cb_mask_patterns_explicit() {
+  local p out="$CFG_MASK"
   for p in $CFG_MASK_PRESETS; do
     out="$out $(cb_mask_preset_patterns "$p")"
   done
   printf '%s\n' "$out"
+}
+
+# cb_mask_excepted NAME - true when NAME (a basename) is listed in MASK_EXCEPT.
+cb_mask_excepted() {
+  local e
+  set -f
+  for e in $CFG_MASK_EXCEPT; do
+    # shellcheck disable=SC2254 # exceptions are glob patterns on purpose
+    case "$1" in
+      $e) set +f; return 0 ;;
+    esac
+  done
+  set +f
+  return 1
 }
 
 cb_readonly_entries() {
@@ -671,41 +693,65 @@ CB_TAB="$(printf '\t')"
 # patterns. A pattern containing "/" is anchored at the project root (shell
 # glob); a pattern without "/" matches a name at any depth. Nothing is pruned:
 # the container can move files into any directory, so every directory counts.
+# Names in MASK_EXCEPT are left out of MASK_DEFAULTS matches only.
 # With a second argument, every ".git" is printed too (one walk for both).
 cb_find_masks() {
-  local dir="$1" with_git="${2:-}" pat names="" f
-  local -a find_expr
-  find_expr=()
+  local dir="$1" with_git="${2:-}" pat f kind
+  local -a defaults explicit except find_expr
+  defaults=()
+  explicit=()
+  except=()
   set -f
-  for pat in $(cb_mask_patterns); do
-    case "$pat" in
-      */*)
-        set +f
-        for f in "$dir"/$pat; do
-          if [ -e "$f" ] || [ -L "$f" ]; then
-            printf '%s\0' "$f"
+  for kind in defaults explicit; do
+    # shellcheck disable=SC2086,SC2046 # pattern lists are split on purpose; globbing is off (set -f)
+    if [ "$kind" = defaults ]; then
+      set -- $CFG_MASK_DEFAULTS
+    else
+      set -- $(cb_mask_patterns_explicit)
+    fi
+    for pat in "$@"; do
+      case "$pat" in
+        */*)
+          set +f
+          for f in "$dir"/$pat; do
+            if [ -e "$f" ] || [ -L "$f" ]; then
+              if [ "$kind" = defaults ] && cb_mask_excepted "$(basename "$f")"; then
+                continue
+              fi
+              printf '%s\0' "$f"
+            fi
+          done
+          set -f
+          ;;
+        *)
+          if [ "$kind" = defaults ]; then
+            [ ${#defaults[@]} -eq 0 ] || defaults+=(-o)
+            defaults+=(-name "$pat")
+          else
+            [ ${#explicit[@]} -eq 0 ] || explicit+=(-o)
+            explicit+=(-name "$pat")
           fi
-        done
-        set -f
-        ;;
-      *)
-        if [ -n "$names" ]; then
-          find_expr+=(-o)
-        fi
-        find_expr+=(-name "$pat")
-        names=1
-        ;;
-    esac
+          ;;
+      esac
+    done
+  done
+  for pat in $CFG_MASK_EXCEPT; do
+    except+=(! -name "$pat")
   done
   set +f
-  if [ -n "$with_git" ]; then
-    if [ -n "$names" ]; then
-      find_expr+=(-o)
-    fi
-    find_expr+=(-name .git)
-    names=1
+  find_expr=()
+  if [ ${#defaults[@]} -gt 0 ]; then
+    find_expr+=(\( \( "${defaults[@]}" \) ${except[@]+"${except[@]}"} \))
   fi
-  if [ -n "$names" ]; then
+  if [ ${#explicit[@]} -gt 0 ]; then
+    [ ${#find_expr[@]} -eq 0 ] || find_expr+=(-o)
+    find_expr+=(\( "${explicit[@]}" \))
+  fi
+  if [ -n "$with_git" ]; then
+    [ ${#find_expr[@]} -eq 0 ] || find_expr+=(-o)
+    find_expr+=(-name .git)
+  fi
+  if [ ${#find_expr[@]} -gt 0 ]; then
     find "$dir" \( "${find_expr[@]}" \) -print0 2>/dev/null || true
   fi
 }

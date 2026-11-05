@@ -99,7 +99,7 @@ rest of your machine.
 | Inside the container, Claude **cannot** | How |
 |---|---|
 | read `~/.ssh`, `~/.aws`, `~/.gitconfig`, other projects, your home | only the project directory is mounted; home and `docker.sock` never are |
-| read `.env`, `.env.*` (and PrestaShop config with the preset) | bind-mounted over with an empty read-only file / empty tmpfs |
+| read `.env`, `.env.*` (and PrestaShop config with the preset) | bind-mounted over with an empty read-only file / empty tmpfs. Committed templates - `.env.example`, `.env.sample`, `.env.template`, `.env.dist` - stay visible (`MASK_EXCEPT`) |
 | plant git hooks or IDE tasks | `.git` (at every depth), `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer` are read-only |
 | unmask a secret by renaming or replacing it | masked paths are recorded with their inode; a moved or swapped one stops the next start |
 | smuggle mount options through file names | paths with commas, quotes or control characters stop the start instead of reaching `docker --mount` |
@@ -359,6 +359,7 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `CLAUDE_CODE_VERSION` | `2.1.318` | pinned Claude Code version |
 | `PROFILE` * | `base` | image profiles, e.g. `python java` (or use `claude-ide-box profile`) |
 | `MASK` * | | extra mask patterns; a name (`secrets.json`) matches at any depth, a path (`config/db.yml`) is anchored at the project root |
+| `MASK_EXCEPT` * | `.env.example .env.sample .env.template .env.dist` | names (globs allowed, no `/`) left visible although `.env.*` matches them. Applies to the default patterns only: a name listed in `MASK` or a mask preset is always masked. Set it to `""` to mask templates too, or put a template in `MASK` if it holds real values |
 | `MASK_PRESETS` * | | `prestashop` |
 | `READONLY` * | | extra read-only paths, e.g. `.husky .envrc` |
 | `GIT_WRITABLE` * | `0` | `1` lets Claude commit (it can then also write `.git/hooks`) |
