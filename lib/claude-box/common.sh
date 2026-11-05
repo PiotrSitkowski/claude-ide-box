@@ -722,6 +722,11 @@ cb_ensure_container() {
       fi
       cb_log "configuration of $CB_NAME changed; recreating it"
       cb_docker rm -f "$CB_NAME" >/dev/null 2>&1 || cb_die "cannot remove outdated container $CB_NAME"
+      # Recompute the mounts now that no process of the old container can
+      # still be changing the project tree (e.g. planting symlinks between
+      # our checks and `docker run`).
+      cb_build_run_args "$image"
+      hash="$( { printf '%s\n' "${CB_RUN_ARGS[@]}"; printf '%s\n' "$image_id"; } | cb_sha256 | cut -c1-16)"
       state=""
     elif [ "$running" != "true" ]; then
       cb_log "starting stopped container $CB_NAME"
