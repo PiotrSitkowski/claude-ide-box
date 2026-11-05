@@ -57,11 +57,14 @@ case "$cmd" in
     echo "1700000000.000 0 172.30.99.5 TCP_TUNNEL/200 5000 CONNECT api.anthropic.com:443 - HIER_DIRECT/1.2.3.4 -"
     echo "1700000001.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT example.com:443 - HIER_NONE/- text/html"
     echo "squid cache.log noise" >&2
+    # A startup line in the same second must not count as a finished reload.
+    echo "2026/11/05 17:07:12| Accepting HTTP Socket connections at conn2 local=0.0.0.0:3128" >&2
     if [ "${FAKE_PROXY_STUCK:-0}" != "1" ]; then
+      echo "2026/11/05 17:07:13| Reconfiguring Squid Cache (version 5.7)..." >&2
       echo "2026/11/05 17:07:13| Accepting HTTP Socket connections at conn33 local=0.0.0.0:3128" >&2
     fi
     ;;
-  stop | volume | ps | pull)
+  stop | volume | ps | pull | kill)
     need_daemon
     echo "${FAKE_PS_OUTPUT:-ok}"
     ;;

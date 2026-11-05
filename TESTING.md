@@ -63,6 +63,7 @@ real installation, and then checks from inside real containers:
 | (f) privileges | `CapEff` and `CapBnd` zero, `NoNewPrivs` 1, non-root, no `docker.sock`, read-only rootfs, no sudo, pids/memory limits and `--init`, home not mounted |
 | (g) wrapper | `claude-box-exec /fake/native-binary/claude --version` prints exactly one line, the version |
 | extra | host listeners unreachable on the internal gateway and `docker0` (with a positive control from the default bridge); Claude Code's API request goes through squid without DNS (tunnel count in the squid log rises, the API answers "Invalid API key" to a fake key); squid runs without capabilities as `proxy` on a read-only rootfs; `claude-box logs` shows the denial; one project's `~/.claude` and files are invisible to another; fail closed with an unreachable daemon and for `$HOME` |
+| allowlist reload | a domain is refused before `claude-box allow` and passes right after it, and squid confirms the reload (it is signalled with SIGHUP; `squid -k reconfigure` depends on a PID file that `squid -N` does not always write, which made the reload fail on Debian's squid 5.7 in CI) |
 | security fixes | a nested `.git` is read-only after the next start; a directory named `q,src=$HOME,dst=...` with a `.env` inside stops the container from being created |
 | php profile (`CLAUDE_BOX_IT_PROFILES=php`) | PHP 8.3 with the PrestaShop extensions, MariaDB client, composer reaching packagist through the proxy without DNS |
 
@@ -71,7 +72,7 @@ nothing was verified; with `CLAUDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is a fa
 
 ### Where they ran
 
-**Development sandbox - 52 passed, 0 failed, 0 skipped.** Native Docker Engine 29.9.2 on Linux
+**Development sandbox - 54 passed, 0 failed, 0 skipped.** Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
 all through regular configuration keys rather than test-only code paths:

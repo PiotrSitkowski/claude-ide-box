@@ -322,6 +322,25 @@ case "$logs" in
   *) not_ok "claude-box logs shows the denied request" "$logs" ;;
 esac
 
+echo "== extra: allowlist changes apply without restarting the proxy"
+before="$(in_box "curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://packagist.org/" 2>&1 || true)"
+allow_out="$("$CLI" allow packagist.org 2>&1 || true)"
+after="$(in_box "curl -s -o /dev/null -w '%{http_code}' --max-time 30 https://packagist.org/" 2>&1 || true)"
+case "$before:$after" in
+  000:[1-5][0-9][0-9] | 403:[1-5][0-9][0-9])
+    if [ "$after" != 403 ]; then
+      ok "claude-box allow takes effect immediately (before: $before, after: HTTP $after)"
+    else
+      not_ok "claude-box allow takes effect immediately" "before $before, after $after"$'\n'"$allow_out"
+    fi
+    ;;
+  *) not_ok "claude-box allow takes effect immediately" "before $before, after $after"$'\n'"$allow_out" ;;
+esac
+case "$allow_out" in
+  *"proxy reloaded"*) ok "the reload is confirmed by squid" ;;
+  *) not_ok "the reload is confirmed by squid" "$allow_out" ;;
+esac
+
 echo "== extra: per-project home volumes"
 in_box 'echo "project-a" > ~/.claude/marker' || true
 (cd "$PROJECT_B" && "$CLI" up >/dev/null 2>&1) || not_ok "second project container starts"

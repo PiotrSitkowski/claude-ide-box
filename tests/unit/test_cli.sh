@@ -82,7 +82,7 @@ test_allow_adds_domain_and_reloads_proxy() {
   assert_contains "$(cat "$HOME/.config/claude-box/allowlist")" "example.org"
   assert_contains "$(generated_allowlist)" "example.org"
   assert_contains "$(generated_allowlist)" "api.anthropic.com"
-  assert_contains "$(calls)" "exec claude-box-proxy squid -k reconfigure"
+  assert_contains "$(calls)" "kill --signal HUP claude-box-proxy"
 }
 
 test_allow_waits_for_proxy_reconfiguration() {
