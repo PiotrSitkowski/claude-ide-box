@@ -581,8 +581,6 @@ cmd_forward() {
   cb_load_config
   cb_find_docker
   cb_ensure_container
-  say "forwarding http://127.0.0.1:$host_port -> port $port in $CB_NAME (Ctrl-C to stop)"
-  say "note: the page is served by code running in the sandbox; treat it like any untrusted site"
   # IPv4 first; dev servers that bind only to ::1 are reached on the retry.
   exec perl -MIO::Socket::INET -e '
     use strict; use warnings;
@@ -590,6 +588,10 @@ cmd_forward() {
     my $srv = IO::Socket::INET->new(LocalAddr => "127.0.0.1", LocalPort => $host_port,
                                     Listen => 32, ReuseAddr => 1)
       or die "claude-ide-box: cannot listen on 127.0.0.1:$host_port: $!\n";
+    # Announce only once the socket accepts connections.
+    $| = 1;
+    print "forwarding http://127.0.0.1:$host_port -> port $port in $name (Ctrl-C to stop)\n",
+          "note: the page is served by code running in the sandbox; treat it like any untrusted site\n";
     $SIG{CHLD} = "IGNORE";
     while (1) {
       my $c = $srv->accept or next;

@@ -558,13 +558,17 @@ test_forward_relays_a_connection_through_docker_exec() {
   local port=$((20000 + RANDOM % 20000)) reply=""
   (cd "$PROJECT" && exec "$CLI" forward 5173 "$port" >"$SANDBOX/fwd.out" 2>&1) &
   local pid=$! _
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
     if grep -q "127.0.0.1:$port" "$SANDBOX/fwd.out" 2>/dev/null; then break; fi
     sleep 0.2
   done
-  sleep 0.3
   reply="$(perl -MIO::Socket::INET -e '
-    my $s = IO::Socket::INET->new(PeerAddr => "127.0.0.1", PeerPort => $ARGV[0]) or die "connect: $!";
+    my $s;
+    for (1 .. 50) {
+      last if $s = IO::Socket::INET->new(PeerAddr => "127.0.0.1", PeerPort => $ARGV[0]);
+      select(undef, undef, undef, 0.1);
+    }
+    $s or die "connect: $!";
     print $s "hello"; shutdown($s, 1); local $/; my $r = <$s>; print $r;' "$port" 2>&1 || true)"
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
