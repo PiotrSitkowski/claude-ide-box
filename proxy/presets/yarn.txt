@@ -1,0 +1,3 @@
+# Yarn registry (yarn classic and berry); npm itself is in the default allowlist
+registry.yarnpkg.com
+repo.yarnpkg.com

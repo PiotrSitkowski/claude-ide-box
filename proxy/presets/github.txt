@@ -1,6 +1,7 @@
-# Preset "github": composer and npm often fetch packages from GitHub.
-# WARNING: github.com accepts pushes, gists and issue comments from anyone with
-# a token, so this preset opens a generic exfiltration channel.
+# GitHub (source downloads) - WARNING: an exfiltration channel
+# composer, go, uv and npm often fetch packages from GitHub. github.com
+# accepts pushes, gists and issue comments from anyone with a token, so this
+# preset opens a generic way for data to leave the sandbox.
 github.com
 api.github.com
 codeload.github.com

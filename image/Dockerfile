@@ -14,10 +14,13 @@ ARG USER_GID=1000
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Only tools Claude Code itself relies on. No sudo, no ssh client.
+# Tools Claude Code relies on, plus what most projects need to build:
+# Python 3 with venv/pip, a C/C++ toolchain (node-gyp, Python wheels, cgo,
+# Rust linking) and socat for `claude-ide-box forward`. No sudo, no ssh client.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash ca-certificates curl git jq less procps ripgrep \
+      bash build-essential ca-certificates curl file git jq less pkg-config procps \
+      python3 python3-dev python3-pip python3-venv ripgrep socat unzip xz-utils zip \
  && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
@@ -33,7 +36,9 @@ RUN /usr/local/sbin/claude-ide-box-create-user "${USER_UID}" "${USER_GID}" \
 
 ENV HOME=/home/claude \
     DISABLE_AUTOUPDATER=1 \
-    CLAUDE_IDE_BOX=1
+    CLAUDE_IDE_BOX=1 \
+    # node-gyp uses the headers shipped with Node instead of downloading them.
+    npm_config_nodedir=/usr/local
 
 LABEL org.opencontainers.image.title="claude-ide-box" \
       io.claude-ide-box.claude-code-version="${CLAUDE_CODE_VERSION}"

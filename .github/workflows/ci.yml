@@ -65,5 +65,5 @@ jobs:
       - name: Integration tests
         env:
           CLAUDE_IDE_BOX_REQUIRE_DOCKER: "1"
-          CLAUDE_IDE_BOX_IT_PROFILES: php
+          CLAUDE_IDE_BOX_IT_PROFILES: php python go rust java office
         run: bash tests/integration/run.sh

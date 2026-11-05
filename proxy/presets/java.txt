@@ -1,0 +1,7 @@
+# Java: Maven Central and the Gradle wrapper and plugin portal
+repo.maven.apache.org
+repo1.maven.org
+services.gradle.org
+downloads.gradle.org
+plugins.gradle.org
+plugins-artifacts.gradle.org

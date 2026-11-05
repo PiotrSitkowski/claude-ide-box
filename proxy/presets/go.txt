@@ -1,0 +1,3 @@
+# Go modules: proxy.golang.org and the checksum database
+proxy.golang.org
+sum.golang.org

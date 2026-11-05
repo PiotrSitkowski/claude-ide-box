@@ -1,0 +1,3 @@
+# Python packages: PyPI (pip, uv, poetry)
+pypi.org
+files.pythonhosted.org

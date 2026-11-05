@@ -864,10 +864,11 @@ cb_build_run_args() {
     --label "io.claude-ide-box.managed=1"
     --network "$CB_NETWORK_INTERNAL"
     --dns 127.0.0.1
+    --add-host "egress-proxy:$CFG_PROXY_IP"
     --cap-drop ALL
     --security-opt no-new-privileges
     --read-only
-    --tmpfs "/tmp:rw,nosuid,nodev,size=$CFG_TMP_SIZE"
+    --tmpfs "/tmp:rw,exec,nosuid,nodev,size=$CFG_TMP_SIZE"
     --pids-limit "$CFG_PIDS_LIMIT"
     --memory "$CFG_MEMORY"
     --cpus "$CFG_CPUS"

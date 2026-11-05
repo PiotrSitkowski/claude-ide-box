@@ -1,5 +1,6 @@
-# claude-ide-box "php" profile: PHP 8.3 CLI with the extensions PrestaShop needs,
-# composer and the MariaDB client, layered on top of the claude-ide-box base image.
+# PHP 8.3 CLI with intl, gd, zip, mysqli, pdo_mysql; composer; MariaDB client (PrestaShop-ready)
+#
+# Layered on top of the base image (or another profile) like every profile.
 #
 # PHP 8.3 is not packaged in Debian bookworm (it ships 8.2). Instead of adding a
 # third-party apt repository, the PHP build is taken from the official
@@ -27,6 +28,8 @@ FROM ${COMPOSER_IMAGE} AS composer
 
 FROM ${BASE_IMAGE}
 USER root
+# Root steps must not leave files in the home directory (see setup).
+ENV HOME=/root
 COPY --from=php-build /php-runtime-packages /tmp/php-runtime-packages
 RUN apt-get update \
  && xargs apt-get install -y --no-install-recommends < /tmp/php-runtime-packages \
@@ -42,4 +45,5 @@ RUN set -e; \
     done; \
     php --version; composer --version --no-interaction
 ENV COMPOSER_HOME=/home/claude/.composer
+ENV HOME=/home/claude
 USER claude

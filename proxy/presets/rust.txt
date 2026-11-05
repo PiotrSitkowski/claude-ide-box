@@ -1,0 +1,4 @@
+# Rust crates: crates.io (cargo)
+crates.io
+index.crates.io
+static.crates.io

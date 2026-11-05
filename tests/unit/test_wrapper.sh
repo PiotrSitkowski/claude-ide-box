@@ -109,6 +109,10 @@ test_hardening_flags() {
   assert_contains "$a" "--memory"
   assert_contains "$a" "--network claude-ide-box-internal"
   assert_contains "$a" "--dns 127.0.0.1"
+  assert_contains "$a" "--add-host egress-proxy:172.30.99.2"
+  # Docker mounts --tmpfs noexec unless told otherwise; go test, cargo test
+  # and npm/pip builds execute files from /tmp.
+  assert_contains "$a" "--tmpfs /tmp:rw,exec,nosuid,nodev,"
   assert_contains "$a" "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
   assert_not_contains "$a" "docker.sock"
   assert_not_contains "$a" "src=$HOME,"
