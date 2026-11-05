@@ -1,0 +1,508 @@
+#!/bin/bash
+# pii-airgap - host side of the air-gapped PII detector.
+#
+# Every detection, pseudonymisation and restoration runs in a throw-away
+# container with no network (--network none), a read-only root file system,
+# no capabilities and the caller's UID. This script only computes paths,
+# checks them and starts those containers; it never reads file contents.
+set -euo pipefail
+
+PA_VERSION="0.1.0"
+PA_IMAGE="${PII_AIRGAP_IMAGE:-pii-airgap:latest}"
+PA_MEMORY="${PII_AIRGAP_MEMORY:-4g}"
+PA_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pii-airgap"
+PA_LISTS_DIR="${PII_AIRGAP_LISTS:-$PA_CONFIG_DIR/lists}"
+PA_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/pii-airgap/scan"
+PA_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/pii-airgap"
+CIB_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-ide-box"
+CIB_TRY_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/claude-ide-box/try"
+CIB_INSTANCE="${CLAUDE_IDE_BOX_INSTANCE:-claude-ide-box}"
+NL='
+'
+
+die() {
+  printf 'pii-airgap: %s\n' "$*" >&2
+  exit 1
+}
+
+say() {
+  printf '%s\n' "$*" >&2
+}
+
+usage() {
+  cat <<'EOF'
+pii-airgap - air-gapped PII detector and reversible pseudonymiser
+
+Usage: pii-airgap <command> [arguments]
+
+  scan [DIR] [--json] [--fail-on-pii] [--min-confidence N]
+                        report which files in DIR (default: current directory)
+                        hold which kinds of personal data
+  mask-add [--project DIR] FILE...
+                        mask FILEs in Claude IDE Box for this project (writes
+                        ~/.config/claude-ide-box/projects/<container>.conf)
+  anonymise DIR --map FILE [--git strip]
+                        replace personal data in DIR by [TYPE_N] tokens, in
+                        place (use it on a copy); FILE keeps the token map
+  restore DIR --map FILE [--base ORIGINAL] [--keep-unresolved]
+                        put real values back for exact, known tokens only
+  try-prepare DIR       pseudonymise the 'claude-ide-box up --try' copy of DIR
+  try-restore DIR [--keep-unresolved]
+                        restore real values in that copy before 'try apply'
+  try-forget DIR        delete the token map of that try session
+  system-prompt         the instructions to append to the agent's system prompt
+  container-name [--project DIR]
+                        the Claude IDE Box container name of DIR
+  build [--ner gliner|spacy|none]
+                        build the image (the model is downloaded at build time)
+  version | help
+
+User lists (client names, project code names): ~/.config/pii-airgap/lists/*.txt,
+one 'term' or 'TYPE: term' per line. They must live outside scanned folders.
+
+No detector finds everything. Anything it misses reaches the AI provider in
+clear text. This reduces exposure; it is not a compliance tool (GDPR, CCPA,
+HIPAA or otherwise).
+EOF
+}
+
+# --------------------------------------------------------------------------
+# Paths and names (kept identical to Claude IDE Box's common.sh)
+# --------------------------------------------------------------------------
+
+normalize_path() {
+  local path="$1" part out=""
+  local IFS=/
+  set -f
+  # shellcheck disable=SC2086 # splitting on / is the point
+  for part in $path; do
+    case "$part" in
+      "" | .) ;;
+      ..) out="${out%/*}" ;;
+      *) out="$out/$part" ;;
+    esac
+  done
+  set +f
+  printf '%s\n' "${out:-/}"
+}
+
+abs_path() {
+  case "$1" in
+    /*) normalize_path "$1" ;;
+    *) normalize_path "$PWD/$1" ;;
+  esac
+}
+
+# Paths go into --mount values, which cannot express commas or quotes.
+check_mount_path() {
+  case "$1" in
+    *,* | *'"'* | *"$NL"*) die "the path '$1' contains a comma, quote or newline, which a --mount option cannot express safely" ;;
+  esac
+}
+
+sha256() {
+  local out
+  if command -v sha256sum >/dev/null 2>&1; then
+    out="$(sha256sum)"
+  elif command -v shasum >/dev/null 2>&1; then
+    out="$(shasum -a 256)"
+  elif command -v openssl >/dev/null 2>&1; then
+    out="$(openssl dgst -sha256 | awk '{print $NF}')"
+  else
+    die "no sha256 tool found (sha256sum, shasum or openssl)"
+  fi
+  printf '%s\n' "${out%% *}"
+}
+
+sanitize_name() {
+  local s
+  s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '-')"
+  while [ -n "$s" ]; do
+    case "$s" in
+      [a-z0-9]*) break ;;
+      *) s="${s#?}" ;;
+    esac
+  done
+  s="$(printf '%s' "$s" | cut -c1-40)"
+  while [ -n "$s" ]; do
+    case "$s" in
+      *[-_.]) s="${s%?}" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s\n' "${s:-project}"
+}
+
+container_name() {
+  printf '%s-%s-%s\n' "$CIB_INSTANCE" "$(sanitize_name "$(basename "$1")")" "$(printf '%s' "$1" | sha256 | cut -c1-8)"
+}
+
+# inside PARENT CHILD - CHILD is PARENT or below it (logical and physical).
+inside() {
+  local p="$1" c="$2" pp cp
+  case "$c/" in "$p"/*) return 0 ;; esac
+  pp="$(cd -P "$p" 2>/dev/null && pwd -P)" || return 1
+  cp="$(cd -P "$c" 2>/dev/null && pwd -P)" || return 1
+  case "$cp/" in "$pp"/*) return 0 ;; esac
+  return 1
+}
+
+project_dir() {
+  local d
+  d="$(abs_path "$1")"
+  [ -d "$d" ] || die "'$1' is not a directory"
+  printf '%s\n' "$d"
+}
+
+# --------------------------------------------------------------------------
+# Container engine
+# --------------------------------------------------------------------------
+
+ENGINE=""
+ENGINE_OPTS=()
+
+find_engine() {
+  if [ -n "${PII_AIRGAP_DOCKER:-}" ]; then
+    ENGINE="$PII_AIRGAP_DOCKER"
+  elif command -v docker >/dev/null 2>&1; then
+    ENGINE=docker
+  elif command -v podman >/dev/null 2>&1; then
+    ENGINE=podman
+  else
+    die "neither docker nor podman was found"
+  fi
+  command -v "$ENGINE" >/dev/null 2>&1 || die "container engine '$ENGINE' not found"
+}
+
+require_engine() {
+  find_engine
+  "$ENGINE" info >/dev/null 2>&1 || die "the container engine ($ENGINE) is not running"
+  case "$("$ENGINE" --version 2>/dev/null)" in
+    *[Pp]odman*)
+      if [ "$("$ENGINE" info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = true ]; then
+        ENGINE_OPTS=(--userns=keep-id)
+      fi
+      ;;
+  esac
+  "$ENGINE" image inspect "$PA_IMAGE" >/dev/null 2>&1 ||
+    die "image $PA_IMAGE not found; build it with 'pii-airgap build'"
+}
+
+MOUNTS=()
+
+mount_ro() {
+  check_mount_path "$1"
+  check_mount_path "$2"
+  MOUNTS+=(--mount "type=bind,src=$1,dst=$2,readonly")
+}
+
+mount_rw() {
+  check_mount_path "$1"
+  check_mount_path "$2"
+  MOUNTS+=(--mount "type=bind,src=$1,dst=$2")
+}
+
+LIST_ARGS=()
+
+# add_lists SCANNED_DIR - mount the user's lists read-only, refusing lists
+# that live inside the folder being scanned (the agent could edit them).
+add_lists() {
+  local dir="$1" lists f
+  lists="$(abs_path "$PA_LISTS_DIR")"
+  if inside "$dir" "$lists" || inside "$lists" "$dir"; then
+    die "the lists directory $lists must be outside the scanned folder $dir"
+  fi
+  [ -d "$lists" ] || return 0
+  for f in "$lists"/*.txt; do
+    [ -f "$f" ] || continue
+    LIST_ARGS+=(--lists "/lists/$(basename "$f")")
+  done
+  [ ${#LIST_ARGS[@]} -eq 0 ] || mount_ro "$lists" /lists
+}
+
+# run_container ARGS... - run the image with MOUNTS; returns its status.
+run_container() {
+  local rc
+  set +e
+  "$ENGINE" run --rm -i --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --pids-limit 256 --memory "$PA_MEMORY" --tmpfs /tmp:rw,nosuid,nodev,size=1g \
+    --user "$(id -u):$(id -g)" -e HOME=/tmp -e PII_AIRGAP_CACHE=/cache \
+    ${ENGINE_OPTS[@]+"${ENGINE_OPTS[@]}"} ${MOUNTS[@]+"${MOUNTS[@]}"} \
+    "$PA_IMAGE" "$@"
+  rc=$?
+  set -e
+  return "$rc"
+}
+
+private_dir() {
+  (umask 077 && mkdir -p "$1") || die "cannot create $1"
+  chmod 700 "$1"
+}
+
+# --------------------------------------------------------------------------
+# Commands
+# --------------------------------------------------------------------------
+
+cmd_scan() {
+  local dir="$PWD" rc=0
+  if [ $# -gt 0 ]; then
+    case "$1" in -*) ;; *) dir="$1"; shift ;; esac
+  fi
+  dir="$(project_dir "$dir")"
+  check_mount_path "$dir"
+  add_lists "$dir"
+  require_engine
+  private_dir "$PA_CACHE_DIR"
+  mount_ro "$dir" "$dir"
+  mount_rw "$PA_CACHE_DIR" /cache
+  run_container scan "$dir" "$@" ${LIST_ARGS[@]+"${LIST_ARGS[@]}"} || rc=$?
+  return "$rc"
+}
+
+# pseudonymise SRC DST MAPDIR MAPNAME - scan SRC (mounted read-only at DST,
+# no map in sight), then pseudonymise it with the map in MAPDIR. Documents
+# with PII that cannot be rewritten stop the second step.
+pseudonymise() {
+  local src="$1" dst="$2" mapdir="$3" mapname="$4" report rc=0
+  add_lists "$src"
+  require_engine
+  private_dir "$PA_CACHE_DIR"
+  private_dir "$mapdir"
+  report="$(mktemp "$mapdir/.scan.XXXXXX")" || die "cannot create a temporary file in $mapdir"
+  chmod 600 "$report"
+  MOUNTS=()
+  mount_ro "$src" "$dst"
+  mount_rw "$PA_CACHE_DIR" /cache
+  [ ${#LIST_ARGS[@]} -eq 0 ] || mount_ro "$(abs_path "$PA_LISTS_DIR")" /lists
+  if ! run_container scan "$dst" --json ${LIST_ARGS[@]+"${LIST_ARGS[@]}"} >"$report"; then
+    rm -f "$report"
+    die "scanning $src failed; nothing was changed"
+  fi
+  MOUNTS=()
+  mount_rw "$src" "$dst"
+  mount_rw "$mapdir" /state
+  mount_ro "$report" /report.json
+  [ ${#LIST_ARGS[@]} -eq 0 ] || mount_ro "$(abs_path "$PA_LISTS_DIR")" /lists
+  run_container anonymise "$dst" --map "/state/$mapname" --git strip --scan-report /report.json \
+    ${LIST_ARGS[@]+"${LIST_ARGS[@]}"} >&2 || rc=$?
+  rm -f "$report"
+  if [ "$rc" -eq 3 ]; then
+    say "Mask the files listed above in Claude IDE Box ('pii-airgap mask-add FILE...'), or remove them,"
+    say "then start again. Nothing was changed."
+  fi
+  return "$rc"
+}
+
+try_root() {
+  local name root
+  name="$(container_name "$1")"
+  root="$CIB_TRY_DIR/$name"
+  [ -d "$root/work" ] || die "no Claude IDE Box try copy of $1 (start one with 'claude-ide-box up --try')"
+  printf '%s\n' "$root"
+}
+
+cmd_try_prepare() {
+  [ $# -eq 1 ] || die "usage: pii-airgap try-prepare DIR"
+  local dir root name
+  dir="$(project_dir "$1")"
+  root="$(try_root "$dir")"
+  name="$(container_name "$dir")"
+  check_mount_path "$dir"
+  pseudonymise "$root/work" "$dir" "$PA_STATE_DIR/try" "$name.map.json"
+}
+
+restore() {
+  local work="$1" dst="$2" base="$3" mapdir="$4" mapname="$5" rc=0
+  shift 5
+  [ -f "$mapdir/$mapname" ] || die "no token map at $mapdir/$mapname; nothing to restore"
+  require_engine
+  MOUNTS=()
+  mount_rw "$work" "$dst"
+  [ -z "$base" ] || mount_ro "$base" /base
+  mount_ro "$mapdir" /state
+  if [ -n "$base" ]; then
+    run_container restore "$dst" --map "/state/$mapname" --base /base "$@" || rc=$?
+  else
+    run_container restore "$dst" --map "/state/$mapname" "$@" || rc=$?
+  fi
+  return "$rc"
+}
+
+cmd_try_restore() {
+  [ $# -ge 1 ] || die "usage: pii-airgap try-restore DIR [--keep-unresolved]"
+  local dir root name
+  dir="$(project_dir "$1")"
+  shift
+  case "${1:-}" in "" | --keep-unresolved) ;; *) die "usage: pii-airgap try-restore DIR [--keep-unresolved]" ;; esac
+  root="$(try_root "$dir")"
+  name="$(container_name "$dir")"
+  check_mount_path "$dir"
+  restore "$root/work" "$dir" "$root/base" "$PA_STATE_DIR/try" "$name.map.json" "$@"
+}
+
+cmd_try_forget() {
+  [ $# -eq 1 ] || die "usage: pii-airgap try-forget DIR"
+  local dir
+  dir="$(abs_path "$1")"
+  rm -f "$PA_STATE_DIR/try/$(container_name "$dir").map.json"
+  say "token map of the try session for $dir deleted"
+}
+
+# map_location FILE - sets MAP_DIR and MAP_NAME for a --map argument.
+map_location() {
+  local f
+  f="$(abs_path "$1")"
+  MAP_DIR="$(dirname "$f")"
+  MAP_NAME="$(basename "$f")"
+  check_mount_path "$MAP_DIR"
+}
+
+cmd_anonymise() {
+  local dir="" map="" git=refuse
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --map) [ $# -ge 2 ] || die "--map needs a file"; map="$2"; shift 2 ;;
+      --git) [ $# -ge 2 ] || die "--git needs refuse or strip"; git="$2"; shift 2 ;;
+      -*) die "unknown option $1" ;;
+      *) [ -z "$dir" ] || die "one directory only"; dir="$1"; shift ;;
+    esac
+  done
+  [ -n "$dir" ] && [ -n "$map" ] || die "usage: pii-airgap anonymise DIR --map FILE [--git strip]"
+  dir="$(project_dir "$dir")"
+  check_mount_path "$dir"
+  map_location "$map"
+  inside "$dir" "$MAP_DIR" && die "the token map must be outside $dir"
+  if [ "$git" != strip ] && [ -e "$dir/.git" ]; then
+    die "$dir has git metadata, whose history holds the original values; work on a copy and pass --git strip"
+  fi
+  pseudonymise "$dir" "$dir" "$MAP_DIR" "$MAP_NAME"
+}
+
+cmd_restore() {
+  local dir="" map="" base="" extra=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --map) [ $# -ge 2 ] || die "--map needs a file"; map="$2"; shift 2 ;;
+      --base) [ $# -ge 2 ] || die "--base needs a directory"; base="$(project_dir "$2")"; shift 2 ;;
+      --keep-unresolved) extra+=(--keep-unresolved); shift ;;
+      -*) die "unknown option $1" ;;
+      *) [ -z "$dir" ] || die "one directory only"; dir="$1"; shift ;;
+    esac
+  done
+  [ -n "$dir" ] && [ -n "$map" ] || die "usage: pii-airgap restore DIR --map FILE [--base DIR] [--keep-unresolved]"
+  dir="$(project_dir "$dir")"
+  check_mount_path "$dir"
+  [ -z "$base" ] || check_mount_path "$base"
+  map_location "$map"
+  restore "$dir" "$dir" "$base" "$MAP_DIR" "$MAP_NAME" ${extra[@]+"${extra[@]}"}
+}
+
+cmd_mask_add() {
+  local project="$PWD" f p rel conf current="" new added=0 tmp
+  if [ "${1:-}" = --project ]; then
+    [ $# -ge 2 ] || die "--project needs a directory"
+    project="$2"
+    shift 2
+  fi
+  [ $# -gt 0 ] || die "usage: pii-airgap mask-add [--project DIR] FILE..."
+  project="$(project_dir "$project")"
+  conf="$CIB_CONFIG_DIR/projects/$(container_name "$project").conf"
+  if [ -f "$conf" ]; then
+    current="$(grep -E '^[[:space:]]*MASK=' "$conf" | tail -n 1 | sed -e 's/^[[:space:]]*MASK=//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\\(.*\\)'\$/\\1/")" || current=""
+  fi
+  new="$current"
+  for f in "$@"; do
+    case "$f" in
+      *" "* | *"	"* | *"$NL"* | *'*'* | *'?'* | *'['* | *']'* | *'"'* | *"'"* | *\\* | *','* | *'$'* | *'`'*)
+        die "'$f': names with spaces, quotes, commas or glob characters cannot be listed in MASK; rename the file or mask it in $conf by hand"
+        ;;
+    esac
+    p="$(abs_path "$([ "${f#/}" != "$f" ] && printf '%s' "$f" || printf '%s/%s' "$project" "$f")")"
+    case "$p" in
+      "$project"/*) rel="${p#"$project"/}" ;;
+      *) die "'$f' is not inside $project" ;;
+    esac
+    case " $new " in
+      *" $rel "*) continue ;;
+    esac
+    [ -e "$p" ] || [ -L "$p" ] || die "'$f' does not exist"
+    new="${new:+$new }$rel"
+    added=$((added + 1))
+  done
+  if [ "$added" -gt 0 ]; then
+    private_dir "$CIB_CONFIG_DIR"
+    mkdir -p "$CIB_CONFIG_DIR/projects"
+    tmp="$conf.tmp.$$"
+    if [ -f "$conf" ]; then
+      grep -v -E '^[[:space:]]*MASK=' "$conf" >"$tmp" || true
+    else
+      : >"$tmp"
+    fi
+    printf 'MASK="%s"\n' "$new" >>"$tmp"
+    mv "$tmp" "$conf"
+  fi
+  say "masked in Claude IDE Box for $project: $new"
+  say "(in $conf; it takes effect when the container is recreated: 'claude-ide-box up --recreate')"
+}
+
+cmd_container_name() {
+  local project="$PWD"
+  if [ "${1:-}" = --project ]; then
+    [ $# -ge 2 ] || die "--project needs a directory"
+    project="$2"
+  fi
+  container_name "$(project_dir "$project")"
+}
+
+script_root() {
+  local src="$0" dir link
+  while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    link="$(readlink "$src")"
+    case "$link" in /*) src="$link" ;; *) src="$dir/$link" ;; esac
+  done
+  cd -P "$(dirname "$src")/.." && pwd
+}
+
+cmd_build() {
+  local ner=gliner root
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --ner) [ $# -ge 2 ] || die "--ner needs gliner, spacy or none"; ner="$2"; shift 2 ;;
+      *) die "usage: pii-airgap build [--ner gliner|spacy|none]" ;;
+    esac
+  done
+  case "$ner" in gliner | spacy | none) ;; *) die "unknown NER backend '$ner'" ;; esac
+  find_engine
+  root="$(script_root)"
+  [ -f "$root/image/Dockerfile" ] || die "image/Dockerfile not found next to $0"
+  "$ENGINE" build -f "$root/image/Dockerfile" --build-arg "NER=$ner" -t "$PA_IMAGE" "$root"
+}
+
+main() {
+  local cmd="${1:-help}"
+  [ $# -eq 0 ] || shift
+  case "$cmd" in
+    help | -h | --help) usage ;;
+    version | --version) printf 'pii-airgap %s\n' "$PA_VERSION" ;;
+    scan) cmd_scan "$@" ;;
+    mask-add) cmd_mask_add "$@" ;;
+    anonymise | anonymize) cmd_anonymise "$@" ;;
+    restore) cmd_restore "$@" ;;
+    try-prepare) cmd_try_prepare "$@" ;;
+    try-restore) cmd_try_restore "$@" ;;
+    try-forget) cmd_try_forget "$@" ;;
+    container-name) cmd_container_name "$@" ;;
+    system-prompt)
+      require_engine
+      run_container system-prompt
+      ;;
+    build) cmd_build "$@" ;;
+    *)
+      printf "pii-airgap: unknown command '%s' (see 'pii-airgap help')\n" "$cmd" >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Fake container engine for the unit tests. Records each call as one line,
+# arguments joined by '|', and answers the few queries the wrapper makes.
+#   FAKE_DOCKER_DOWN=1          'info' fails (daemon not running)
+#   FAKE_DOCKER_FAIL_RUN=N      the N-th 'run' exits with status 3
+#   FAKE_DOCKER_RUN_OUT=TEXT    stdout of every 'run'
+#   FAKE_DOCKER_ROOTLESS=true   podman-style rootless answer
+#   FAKE_DOCKER_PODMAN=1        'version' says Podman
+set -u
+line=""
+for a in "$@"; do line="$line${line:+|}$a"; done
+printf '%s\n' "$line" >>"${FAKE_DOCKER_LOG:-/dev/null}"
+case "${1:-}" in
+  info)
+    [ "${FAKE_DOCKER_DOWN:-0}" != 1 ] || { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
+    case "$*" in
+      *Rootless*) echo "${FAKE_DOCKER_ROOTLESS:-false}" ;;
+      *) echo "ok" ;;
+    esac
+    ;;
+  version | --version)
+    if [ "${FAKE_DOCKER_PODMAN:-0}" = 1 ]; then echo "podman version 4.9.3"; else echo "Docker version 29"; fi
+    ;;
+  image)
+    [ "${FAKE_DOCKER_NO_IMAGE:-0}" != 1 ] || exit 1
+    ;;
+  run)
+    n=$(($(grep -c '^run|' "${FAKE_DOCKER_LOG:-/dev/null}" 2>/dev/null || echo 0)))
+    [ "${FAKE_DOCKER_FAIL_RUN:-0}" != "$n" ] || { echo "fake run failed" >&2; exit 3; }
+    printf '%s' "${FAKE_DOCKER_RUN_OUT:-}"
+    ;;
+esac
+exit 0
