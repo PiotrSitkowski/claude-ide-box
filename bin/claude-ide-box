@@ -51,6 +51,8 @@ Current project (the working directory)
   rm [--volume]               remove it (--volume also deletes its home volume,
                               i.e. conversation history and ~/.claude)
   shell                       bash inside the project container
+  forward PORT [HOST_PORT]    open a dev server running in the container (e.g. 5173)
+                              at http://127.0.0.1:HOST_PORT on the host
   status                      show proxy, network and container state
 
 Network
@@ -230,6 +232,19 @@ cb_build() {
   cb_docker build ${net[@]+"${net[@]}"} -t "$tag" "$@" "$ctx" >&2 || cb_die "building $tag failed"
 }
 
+# The home directory becomes each project's home volume. A profile that runs
+# tools as root with HOME=/home/claude leaves root-owned files there (e.g.
+# ~/.config), and programs that cannot write their settings may hang
+# instead of failing (LibreOffice does). Refuse such an image.
+cb_check_profile_home() {
+  local foreign
+  foreign="$(cb_docker run --rm --user 0 --entrypoint find "$1" /home/claude \
+    ! -user claude -print 2>/dev/null | head -n 5)" || true
+  if [ -n "$foreign" ]; then
+    cb_die "profile '$2' leaves files in /home/claude that do not belong to the claude user: $(printf '%s' "$foreign" | tr '\n' ' ')- run root commands in its Dockerfile with HOME=/root"
+  fi
+}
+
 # cb_build_profiles LIST - build the image chain for a profile combination:
 # env:a FROM base, env:a.b FROM env:a, ... Each image is built once per run.
 CB_BUILT=" "
@@ -247,6 +262,7 @@ cb_build_profiles() {
       *)
         dir="$(cb_profile_dir "$p")"
         cb_build "$tag" "$dir" --build-arg "BASE_IMAGE=$prev"
+        cb_check_profile_home "$tag" "$p"
         CB_BUILT="$CB_BUILT$tag "
         ;;
     esac
@@ -539,6 +555,59 @@ EOF
 }
 
 # --------------------------------------------------------------------------
+# forward: reach a dev server in the container from the host browser
+# --------------------------------------------------------------------------
+
+cb_valid_port() {
+  case "$1" in
+    "" | *[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+# The container has no published ports and no route out. Each connection to
+# 127.0.0.1:HOST_PORT on the host becomes one `docker exec -i ... socat`
+# into the container - the same stdin/stdout channel the Claude session
+# uses - so the container gains no network access of any kind.
+cmd_forward() {
+  if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    cb_die "usage: claude-ide-box forward PORT [HOST_PORT]"
+  fi
+  local port="$1" host_port="${2:-$1}"
+  cb_valid_port "$port" || cb_die "invalid port '$port'"
+  cb_valid_port "$host_port" || cb_die "invalid host port '$host_port'"
+  command -v perl >/dev/null 2>&1 || cb_die "forward needs perl on the host"
+  project_from_pwd
+  cb_load_config
+  cb_find_docker
+  cb_ensure_container
+  say "forwarding http://127.0.0.1:$host_port -> port $port in $CB_NAME (Ctrl-C to stop)"
+  say "note: the page is served by code running in the sandbox; treat it like any untrusted site"
+  # IPv4 first; dev servers that bind only to ::1 are reached on the retry.
+  exec perl -MIO::Socket::INET -e '
+    use strict; use warnings;
+    my ($host_port, $docker, $name, $port) = @ARGV;
+    my $srv = IO::Socket::INET->new(LocalAddr => "127.0.0.1", LocalPort => $host_port,
+                                    Listen => 32, ReuseAddr => 1)
+      or die "claude-ide-box: cannot listen on 127.0.0.1:$host_port: $!\n";
+    $SIG{CHLD} = "IGNORE";
+    while (1) {
+      my $c = $srv->accept or next;
+      my $pid = fork;
+      if (!defined $pid) { close $c; next; }
+      if ($pid == 0) {
+        close $srv;
+        open(STDIN, "<&", $c) or exit 1;
+        open(STDOUT, ">&", $c) or exit 1;
+        exec $docker, "exec", "-i", $name, "sh", "-c",
+          "socat - TCP4:127.0.0.1:$port 2>/dev/null || exec socat - TCP6:[::1]:$port";
+        exit 1;
+      }
+      close $c;
+    }' "$host_port" "$CB_DOCKER" "$CB_NAME" "$port"
+}
+
+# --------------------------------------------------------------------------
 # Modules: profiles and presets
 # --------------------------------------------------------------------------
 
@@ -817,6 +886,7 @@ main() {
     allow) cmd_allow "$@" ;;
     preset) cmd_preset "$@" ;;
     presets) cmd_presets "$@" ;;
+    forward) cmd_forward "$@" ;;
     profile) cmd_profile "$@" ;;
     profiles) cmd_profiles "$@" ;;
     guard) cmd_guard "$@" ;;

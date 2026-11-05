@@ -79,6 +79,13 @@ case "$cmd" in
     ;;
   run)
     need_daemon
+    case " $* " in
+      *" --rm "*)
+        # setup's home-ownership check of a freshly built profile image
+        printf '%s' "${FAKE_HOME_FOREIGN:-}"
+        exit 0
+        ;;
+    esac
     printf '%s\n' "$@" >"$dir/run.args"
     label=""
     prev=""
@@ -125,6 +132,13 @@ case "$cmd" in
         exe) printf 'sleep infinity\n/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe --verbose\n' ;;
         *) printf 'sleep infinity\nbash\n' ;;
       esac
+      exit 0
+    fi
+    if [ "${1:-}" = "sh" ] && printf '%s' "$*" | grep -q socat; then
+      # forward: behave like a tiny echo service behind socat
+      printf '%s\n' "$*" >"$dir/forward.cmd"
+      printf 'FWD:'
+      head -c 5
       exit 0
     fi
     printf '%s\n' "$name" >"$dir/exec.name"

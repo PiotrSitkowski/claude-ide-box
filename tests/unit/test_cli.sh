@@ -457,6 +457,21 @@ test_setup_builds_a_profile_chain() {
   assert_contains "$c" "$HOME/.config/claude-ide-box/profiles/mytool"
 }
 
+test_setup_rejects_a_profile_that_leaves_root_files_in_home() {
+  user_profile mytool
+  FAKE_HOME_FOREIGN="/home/claude/.config" run_cli setup --profile mytool
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "/home/claude/.config"
+  assert_contains "$ERR" "HOME=/root"
+}
+
+test_setup_checks_home_ownership_of_profile_images() {
+  user_profile mytool
+  run_cli setup --profile mytool
+  assert_status 0 "$STATUS"
+  assert_contains "$(calls)" "run --rm --user 0 --entrypoint find claude-ide-box/env:mytool /home/claude"
+}
+
 test_setup_builds_the_current_projects_profiles() {
   user_profile mytool
   project_conf 'PROFILE="mytool php"'
@@ -522,4 +537,38 @@ test_presets_command_lists_state() {
   assert_contains "$OUT" "on"
   assert_contains "$OUT" "github"
   assert_contains "$OUT" "prestashop"
+}
+
+# --- forward -------------------------------------------------------------------
+
+test_forward_rejects_bad_ports() {
+  local p
+  for p in abc 0 70000 "80 81" -1; do
+    run_cli forward "$p"
+    assert_nonzero "$STATUS" "port '$p' must be rejected"
+  done
+}
+
+test_forward_relays_a_connection_through_docker_exec() {
+  local port=$((20000 + RANDOM % 20000)) reply=""
+  (cd "$PROJECT" && exec "$CLI" forward 5173 "$port" >"$SANDBOX/fwd.out" 2>&1) &
+  local pid=$! i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if grep -q "127.0.0.1:$port" "$SANDBOX/fwd.out" 2>/dev/null; then break; fi
+    sleep 0.2
+  done
+  sleep 0.3
+  reply="$(perl -MIO::Socket::INET -e '
+    my $s = IO::Socket::INET->new(PeerAddr => "127.0.0.1", PeerPort => $ARGV[0]) or die "connect: $!";
+    print $s "hello"; shutdown($s, 1); local $/; my $r = <$s>; print $r;' "$port" 2>&1 || true)"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  assert_eq "FWD:hello" "$reply"
+  assert_contains "$(cat "$FAKE_DOCKER_DIR/forward.cmd")" "socat"
+  assert_contains "$(cat "$FAKE_DOCKER_DIR/forward.cmd")" "5173"
+  assert_contains "$(cat "$SANDBOX/fwd.out")" "http://127.0.0.1:$port"
+}
+
+test_forward_listens_on_loopback_only() {
+  assert_contains "$(cat "$REPO_DIR/bin/claude-ide-box")" 'LocalAddr => "127.0.0.1"'
 }

@@ -15,7 +15,7 @@
 #   CLAUDE_IDE_BOX_IT_UPSTREAM_PROXY    host:port of a parent proxy for squid
 #   CLAUDE_IDE_BOX_IT_SUBNET            internal subnet (default 172.30.98.0/24)
 #   CLAUDE_IDE_BOX_IT_ALLOWED_URL       URL that must pass (default https://api.anthropic.com/)
-#   CLAUDE_IDE_BOX_IT_PROFILES          extra image profiles to build and test (e.g. "php")
+#   CLAUDE_IDE_BOX_IT_PROFILES          image profiles to build and test, e.g. "php python go rust java office"
 #   CLAUDE_IDE_BOX_IT_KEEP=1            keep containers, networks and volumes afterwards
 set -euo pipefail
 
@@ -341,6 +341,24 @@ case "$allow_out" in
   *) not_ok "the reload is confirmed by squid" "$allow_out" ;;
 esac
 
+echo "== extra: forward a dev server to the host"
+docker exec -d -w /tmp "$NAME" python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null
+fport=$((30000 + RANDOM % 20000))
+(cd "$PROJECT" && exec "$CLI" forward 8765 "$fport" >"$WORK/forward.log" 2>&1) &
+fwd_pid=$!
+code=000
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  sleep 0.5
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 --noproxy '*' "http://127.0.0.1:$fport/" || true)"
+  [ "$code" != 000 ] && break
+done
+kill "$fwd_pid" 2>/dev/null || true
+wait "$fwd_pid" 2>/dev/null || true
+[ "$code" = 200 ] && ok "claude-ide-box forward serves a container dev server on 127.0.0.1" ||
+  not_ok "claude-ide-box forward serves a container dev server on 127.0.0.1" "HTTP $code"$'\n'"$(cat "$WORK/forward.log")"
+v="$(docker port "$NAME" 2>/dev/null || true)"
+[ -z "$v" ] && ok "the container still publishes no ports" || not_ok "the container still publishes no ports" "$v"
+
 echo "== extra: per-project home volumes"
 in_box 'echo "project-a" > ~/.claude/marker' || true
 (cd "$PROJECT_B" && "$CLI" up >/dev/null 2>&1) || not_ok "second project container starts"
@@ -396,34 +414,111 @@ case "$st:$out" in
   *) not_ok "the home directory is refused as a project" "$out" ;;
 esac
 
-if printf ' %s ' "${CLAUDE_IDE_BOX_IT_PROFILES:-}" | grep -q ' php '; then
-  echo "== profile php"
-  PHP_PROJECT="$WORK/php-project"
-  mkdir -p "$PHP_PROJECT"
-  mkdir -p "$XDG_CONFIG_HOME/claude-ide-box/projects"
-  php_name="$(container_name "$PHP_PROJECT")"
-  echo 'PROFILE=php' >"$XDG_CONFIG_HOME/claude-ide-box/projects/$php_name.conf"
-  if (cd "$PHP_PROJECT" && "$CLI" up) >"$WORK/php-up.log" 2>&1; then
-    ok "php profile container starts"
-    v="$(docker exec "$php_name" php -m 2>&1 | tr '\n' ' ')"
-    missing=""
-    for m in curl gd intl mbstring mysqli pdo_mysql xml zip; do
-      printf ' %s ' "$v" | grep -qi " $m " || missing="$missing $m"
-    done
-    [ -z "$missing" ] && ok "PHP $(docker exec "$php_name" php -r 'echo PHP_VERSION;') has the PrestaShop extensions" ||
-      not_ok "PHP extensions present" "missing:$missing"
-    docker exec "$php_name" mysql --version >/dev/null 2>&1 && ok "mariadb client present" || not_ok "mariadb client present"
-    preset_out="$("$CLI" preset php on 2>&1 || true)"
-    out="$(docker exec -w "$PHP_PROJECT" "$php_name" composer show --all --no-interaction monolog/monolog 2>&1 || true)"
-    case "$out" in
-      *"name "*monolog/monolog*) ok "composer reaches packagist through the proxy without DNS" ;;
-      *) not_ok "composer reaches packagist through the proxy without DNS" "preset: $preset_out"$'\n'"$(printf '%s\n' "$out" | tail -n 5)"$'\n'"allowlist: $(tr '\n' ' ' <"$XDG_STATE_HOME/claude-ide-box/proxy/allowlist")" ;;
-    esac
-    "$CLI" preset php off >/dev/null 2>&1 || true
-  else
-    not_ok "php profile container starts" "$(tail -n 20 "$WORK/php-up.log")"
+echo "== base image: native npm modules and Python"
+out="$(in_box "cd /tmp && mkdir -p native && cd native && npm init -y >/dev/null && npm_config_build_from_source=true npm install --no-audit --no-fund bufferutil@4 >/tmp/npm.log 2>&1 && node -e \"require('bufferutil'); console.log('native-ok')\"" 2>&1 || true)"
+case "$out" in
+  *native-ok*) ok "a native npm module compiles (node-gyp, no header download)" ;;
+  *) not_ok "a native npm module compiles" "$out"$'\n'"$(in_box "tail -n 15 /tmp/npm.log" 2>&1)" ;;
+esac
+out="$(in_box "python3 -m venv /tmp/venv && /tmp/venv/bin/python -c 'import sys; print(sys.version_info[0])'" 2>&1 || true)"
+[ "$out" = 3 ] && ok "python3 with venv is in the base image" || not_ok "python3 with venv is in the base image" "$out"
+
+# profile_project NAME PROFILES - create a project using PROFILES; sets PNAME and PDIR.
+profile_project() {
+  PDIR="$WORK/profile-$1"
+  mkdir -p "$PDIR" "$XDG_CONFIG_HOME/claude-ide-box/projects"
+  PNAME="$(container_name "$PDIR")"
+  printf 'PROFILE="%s"\n' "$2" >"$XDG_CONFIG_HOME/claude-ide-box/projects/$PNAME.conf"
+  if (cd "$PDIR" && "$CLI" up) >"$WORK/up-$1.log" 2>&1; then
+    ok "profile '$2': container starts"
+    return 0
   fi
-fi
+  not_ok "profile '$2': container starts" "$(tail -n 20 "$WORK/up-$1.log")"
+  return 1
+}
+
+# in_profile CMD - run CMD in the current profile project's container.
+in_profile() {
+  docker exec -w "$PDIR" "$PNAME" bash -c "$1"
+}
+
+# check_with_preset PRESET DESCRIPTION EXPECTED CMD
+check_with_preset() {
+  local preset_out out
+  preset_out="$("$CLI" preset "$1" on 2>&1 || true)"
+  out="$(in_profile "$4" 2>&1 || true)"
+  case "$out" in
+    *"$3"*) ok "$2" ;;
+    *) not_ok "$2" "preset: $preset_out"$'\n'"$(printf '%s\n' "$out" | tail -n 8)" ;;
+  esac
+  "$CLI" preset "$1" off >/dev/null 2>&1 || true
+}
+
+for profile in ${CLAUDE_IDE_BOX_IT_PROFILES:-}; do
+  echo "== profile $profile"
+  profile_project "$profile" "$profile" || continue
+  case "$profile" in
+    php)
+      v="$(in_profile "php -m" 2>&1 | tr '\n' ' ')"
+      missing=""
+      for m in curl gd intl mbstring mysqli pdo_mysql xml zip; do
+        printf ' %s ' "$v" | grep -qi " $m " || missing="$missing $m"
+      done
+      [ -z "$missing" ] && ok "PHP $(in_profile "php -r 'echo PHP_VERSION;'") has the PrestaShop extensions" ||
+        not_ok "PHP extensions present" "missing:$missing"
+      in_profile "mysql --version" >/dev/null 2>&1 && ok "mariadb client present" || not_ok "mariadb client present"
+      check_with_preset php "composer reaches packagist through the proxy without DNS" "name " \
+        "composer show --all --no-interaction monolog/monolog"
+      ;;
+    python)
+      check_with_preset python "uv installs a package from PyPI through the proxy" "six-ok" \
+        "uv venv -q .venv && uv pip install -q --python .venv/bin/python six && .venv/bin/python -c 'import six; print(\"six-ok\")'"
+      ;;
+    go)
+      check_with_preset go "go downloads a module through proxy.golang.org" '"Version"' \
+        "go mod download -json golang.org/x/text@latest"
+      ;;
+    rust)
+      check_with_preset rust "cargo adds and builds a crate from crates.io" "rust-ok" \
+        "cargo new -q --vcs none app && cd app && cargo add -q itoa && cargo build -q && printf 'rust-ok\n'"
+      ;;
+    java)
+      check_with_preset java "Maven fetches an artifact from Maven Central" "java-ok" \
+        "mvn -q -B dependency:get -Dartifact=junit:junit:4.13.2 && printf 'java-ok\n'"
+      ;;
+    office)
+      out="$(in_profile "printf '# Umowa\n\nTekst zażółć.\n' > t.md && pandoc t.md -o t.docx && soffice --headless --convert-to pdf t.docx >/dev/null 2>&1 && pdftotext t.pdf -" 2>&1 || true)"
+      case "$out" in
+        *Umowa*) ok "office: Markdown -> DOCX -> PDF -> text works offline" ;;
+        *) not_ok "office: Markdown -> DOCX -> PDF -> text works offline" "$out" ;;
+      esac
+      in_profile "tesseract --list-langs 2>&1 | grep -qx pol" && ok "office: OCR with Polish" || not_ok "office: OCR with Polish"
+      # Excel: write a workbook with a formula, let LibreOffice recalculate it.
+      out="$(in_profile "python3 -c \"import openpyxl; wb = openpyxl.Workbook(); ws = wb.active; ws['A1'] = 20; ws['A2'] = 22; ws['A3'] = '=SUM(A1:A2)'; wb.save('book.xlsx')\" && soffice --headless --convert-to csv book.xlsx >/dev/null 2>&1 && cat book.csv" 2>&1 || true)"
+      case "$out" in
+        *42*) ok "office: an .xlsx formula is computed (openpyxl + LibreOffice)" ;;
+        *) not_ok "office: an .xlsx formula is computed" "$out" ;;
+      esac
+      # Word: edit an existing .docx in place, without converting it.
+      out="$(in_profile "python3 -c \"import docx; d = docx.Document('t.docx'); d.add_paragraph('Aneks nr 1'); d.save('t.docx'); print([p.text for p in docx.Document('t.docx').paragraphs])\"" 2>&1 || true)"
+      case "$out" in
+        *Umowa*"Aneks nr 1"*) ok "office: a .docx is edited in place (python-docx)" ;;
+        *) not_ok "office: a .docx is edited in place" "$out" ;;
+      esac
+      ;;
+    *) skip "profile $profile" "no specific checks" ;;
+  esac
+done
+
+case " ${CLAUDE_IDE_BOX_IT_PROFILES:-} " in
+  *" go "*" python "* | *" python "*" go "*)
+    echo "== combined profiles"
+    if profile_project combo "python go"; then
+      in_profile "go version && uv --version" >/dev/null 2>&1 &&
+        ok "profiles combine: go and uv in one container" || not_ok "profiles combine: go and uv in one container"
+    fi
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
