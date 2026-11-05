@@ -679,3 +679,20 @@ test_previously_masked_template_does_not_trip_the_mask_record() {
   assert_nonzero "$STATUS"
   assert_contains "$ERR" "$PROJECT/.env"
 }
+
+test_inode_probe_survives_a_path_that_vanishes() {
+  # cb_lock probes the lock directory's inode while its holder may remove it
+  # at any moment: [ -e ] passes, then ls finds nothing and exits 2. Under
+  # set -euo pipefail that used to end the wrapper with status 2 (seen in CI).
+  cat >"$SANDBOX/bin/ls" <<'EOS'
+#!/bin/sh
+echo "ls: cannot access '$2': No such file or directory" >&2
+exit 2
+EOS
+  chmod +x "$SANDBOX/bin/ls"
+  local out st
+  out="$(bash -c 'set -euo pipefail; CB_INSTANCE=claude-ide-box; . "$1"; v="$(cb_inode "$2")"; echo "survived:$v"' _ \
+    "$REPO_DIR/lib/claude-ide-box/common.sh" "$PROJECT" 2>/dev/null)" && st=0 || st=$?
+  assert_status 0 "$st"
+  assert_eq "survived:" "$out"
+}

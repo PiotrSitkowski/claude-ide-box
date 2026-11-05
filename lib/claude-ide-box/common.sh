@@ -980,7 +980,9 @@ cb_mask_record() {
 cb_inode() {
   if [ -e "$1" ]; then
     # shellcheck disable=SC2012 # ls -di is the portable way to read an inode
-    ls -di "$1" 2>/dev/null | awk '{print $1}'
+    # The path may vanish between the test and ls (a lock released by its
+    # holder); that is "no inode", not an error.
+    ls -di "$1" 2>/dev/null | awk '{print $1}' || true
   fi
 }
 
