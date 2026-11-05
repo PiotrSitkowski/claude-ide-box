@@ -39,6 +39,8 @@ dependency to install on every runner for no extra coverage.
 | Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 123 passed, 0 failed |
 | `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 123 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image) |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
+| Ubuntu 24.04 and the `bash:3.2` image, this release (quickstart, Podman, `--try`) | 179 passed, 0 failed in each |
+| CI: the same three jobs, this release | passed (run 28, commit `f319265`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
 commit as the code, but were run red before the implementation existed (35 of 39 wrapper tests and
@@ -48,6 +50,19 @@ injection, nested repositories and mask escapes, then a decoy-replacement test, 
 fixes, and so were the 8 tests for the code review findings. One of them is worth noting: six
 concurrent `guard` runs made one process `chmod a-x` a `.orig` that another had just turned into
 a symlink, which removed the execute bit from the real wrapper.
+
+The additions of this release were written the same way, each test file run red first: the
+`.env` template masks (5 of 6 red; the sixth is a refusal that an unknown key also produced), the
+`logs` summary (4 of 5 red; the sixth, "no colour codes", passed against plain output), `quickstart`
+(9 of 9), the engine layer (12 of 14; the two passes were Docker's unchanged options and the CPU
+count), the Podman `notmpcopyup` mask (1 of 1) and `--try` (17 of 18; the comma refusal passed
+vacuously). Two problems surfaced while doing so and got their own red test first: reading through
+a directory of the try copy that the container replaced by a symlink to a host directory (which
+would have copied host files into the project), and an inode probe that aborted the wrapper with
+status 2 when a lock vanished under it - the cause of the intermittent
+`test_live_lock_is_not_broken_while_its_pid_file_flickers` failure on CI for `main`. Building the
+base image as root (UID/GID 1000) also exposed a bug in `create-user.sh`, fixed and checked against
+the `node` and `ubuntu` images.
 
 ## Integration tests
 
@@ -93,6 +108,25 @@ all through regular configuration keys rather than test-only code paths:
 The `php` and `rust` profiles were **not** built there: `php` needs Debian packages from mirrors
 the sandbox cannot reach, and `rustup` in the rust build stage does not trust the sandbox's TLS
 interception CA.
+
+**This release, development sandbox, Docker - 84 passed, 1 failed** with `"python go java office"`;
+the failure was a new check that wrongly expected `nameserver 127.0.0.1` on Docker, which always
+lists its embedded resolver (fixed). **CI run 28 (ubuntu-latest, all six profiles) - 91 passed, 0
+failed, 0 skipped.**
+
+**This release, development sandbox, rootful Podman 4.9.3 - 61 passed, 12 failed.** Passing:
+setup with Podman, masks (including the directory mask that `notmpcopyup` fixed), read-only paths,
+ownership, privileges, `/run`, `/var/tmp` and `/dev/shm`, the DNS-less internal network and
+resolver, wrapper stdout, host listeners unreachable (with a positive control), proxy hardening,
+`forward`, per-project homes, a new `.env.local` masked, nested `.git`, `up --try` through
+`try apply`, fail closed. Failing: every check that needs the project container to reach squid
+(10, plus the native npm module that downloads through it) - on that host Docker's `FORWARD DROP`
+policy drops traffic between containers on a Podman bridge (see PLATFORM-NOTES), so the container
+fails closed, and changing the host firewall was not possible there - and the mount-option check,
+whose container was still being torn down after the hung API check had been interrupted; the same
+case reproduced by hand refuses the start and creates no container. Rootless Podman and rootless
+Docker were checked by hand on that host: both are refused with their messages, as intended on
+cgroup v1.
 
 **CI (ubuntu-latest) - 77 passed, 0 failed, 0 skipped** (run 22, commit `49e5465`): the same suite
 with the real Debian-based images, direct egress and all six profiles - `php` (PHP 8.3.36),
