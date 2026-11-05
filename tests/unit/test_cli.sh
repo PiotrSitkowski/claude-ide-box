@@ -1,9 +1,9 @@
 # shellcheck shell=bash
-# Unit tests for bin/claude-box (management CLI) against the fake docker.
+# Unit tests for bin/claude-ide-box (management CLI) against the fake docker.
 
 calls() { cat "$FAKE_DOCKER_DIR/calls" 2>/dev/null || true; }
-cfg() { cat "$HOME/.config/claude-box/config" 2>/dev/null || true; }
-generated_allowlist() { cat "$HOME/.local/state/claude-box/proxy/allowlist" 2>/dev/null || true; }
+cfg() { cat "$HOME/.config/claude-ide-box/config" 2>/dev/null || true; }
+generated_allowlist() { cat "$HOME/.local/state/claude-ide-box/proxy/allowlist" 2>/dev/null || true; }
 
 # Fake extension installs in both bundled-binary layouts, several versions.
 make_extensions() {
@@ -47,7 +47,7 @@ test_guard_replaces_all_versions_and_layouts() {
   for b in $(all_bundled); do
     n=$((n + 1))
     [ -L "$b" ] || fail "$b is not a symlink"
-    assert_eq "$(cd -P "$REPO_DIR/bin" && pwd -P)/claude-box-exec" "$(readlink "$b")"
+    assert_eq "$(cd -P "$REPO_DIR/bin" && pwd -P)/claude-ide-box-exec" "$(readlink "$b")"
     assert_file_exists "$b.orig"
     [ ! -x "$b.orig" ] || fail "$b.orig must not be executable"
   done
@@ -79,10 +79,10 @@ test_allow_adds_domain_and_reloads_proxy() {
   echo "true" >"$FAKE_DOCKER_DIR/state"
   run_cli allow Example.ORG
   assert_status 0 "$STATUS"
-  assert_contains "$(cat "$HOME/.config/claude-box/allowlist")" "example.org"
+  assert_contains "$(cat "$HOME/.config/claude-ide-box/allowlist")" "example.org"
   assert_contains "$(generated_allowlist)" "example.org"
   assert_contains "$(generated_allowlist)" "api.anthropic.com"
-  assert_contains "$(calls)" "kill --signal HUP claude-box-proxy"
+  assert_contains "$(calls)" "kill --signal HUP claude-ide-box-proxy"
 }
 
 test_allow_waits_for_proxy_reconfiguration() {
@@ -95,7 +95,7 @@ test_allow_waits_for_proxy_reconfiguration() {
 
 test_allow_warns_when_proxy_does_not_come_back() {
   echo "true" >"$FAKE_DOCKER_DIR/state"
-  FAKE_PROXY_STUCK=1 CLAUDE_BOX_RELOAD_TIMEOUT=1 run_cli allow example.org
+  FAKE_PROXY_STUCK=1 CLAUDE_IDE_BOX_RELOAD_TIMEOUT=1 run_cli allow example.org
   assert_status 0 "$STATUS"
   assert_contains "$ERR" "did not confirm"
 }
@@ -112,7 +112,7 @@ test_allow_rejects_invalid_domains() {
     run_cli allow "$d"
     assert_nonzero "$STATUS" "allow '$d' must fail"
   done
-  assert_file_missing "$HOME/.config/claude-box/allowlist"
+  assert_file_missing "$HOME/.config/claude-ide-box/allowlist"
 }
 
 test_allow_accepts_subdomain_wildcard() {
@@ -147,7 +147,7 @@ test_preset_prestashop_is_per_project() {
   run_cli preset prestashop on
   assert_status 0 "$STATUS"
   local f
-  f="$(ls "$HOME/.config/claude-box/projects/"*.conf)"
+  f="$(ls "$HOME/.config/claude-ide-box/projects/"*.conf)"
   assert_contains "$(cat "$f")" 'MASK_PRESETS="prestashop"'
 }
 
@@ -165,14 +165,14 @@ test_setup_creates_internal_network_and_proxy() {
   local c
   c="$(calls)"
   assert_contains "$c" "build"
-  assert_contains "$c" "-t claude-box/base:latest"
-  assert_contains "$c" "-t claude-box/proxy:latest"
+  assert_contains "$c" "-t claude-ide-box/base:latest"
+  assert_contains "$c" "-t claude-ide-box/proxy:latest"
   assert_contains "$c" "network create"
   assert_contains "$c" "--internal"
   assert_contains "$c" "com.docker.network.bridge.inhibit_ipv4=true"
   assert_contains "$c" "--subnet 172.30.99.0/24"
-  assert_contains "$c" "network connect --ip 172.30.99.2 claude-box-internal claude-box-proxy"
-  assert_contains "$c" "--name claude-box-proxy"
+  assert_contains "$c" "network connect --ip 172.30.99.2 claude-ide-box-internal claude-ide-box-proxy"
+  assert_contains "$c" "--name claude-ide-box-proxy"
   assert_not_contains "$c" "docker.sock"
   assert_contains "$(generated_allowlist)" "platform.claude.com"
 }
@@ -189,8 +189,8 @@ test_setup_passes_uid_gid_and_version() {
 test_setup_profile_builds_on_base() {
   run_cli setup --profile php
   assert_status 0 "$STATUS"
-  assert_contains "$(calls)" "-t claude-box/php:latest"
-  assert_contains "$(calls)" "BASE_IMAGE=claude-box/base:latest"
+  assert_contains "$(calls)" "-t claude-ide-box/php:latest"
+  assert_contains "$(calls)" "BASE_IMAGE=claude-ide-box/base:latest"
 }
 
 test_setup_fails_when_build_fails() {
@@ -215,7 +215,7 @@ test_up_recreate() {
   run_cli up
   run_cli up --recreate
   assert_status 0 "$STATUS"
-  assert_contains "$(calls)" "rm -f claude-box-my-project-"
+  assert_contains "$(calls)" "rm -f claude-ide-box-my-project-"
 }
 
 test_down_and_rm() {
@@ -225,10 +225,10 @@ test_down_and_rm() {
   assert_contains "$(calls)" "stop"
   run_cli rm
   assert_status 0 "$STATUS"
-  assert_contains "$(calls)" "rm -f claude-box-my-project-"
+  assert_contains "$(calls)" "rm -f claude-ide-box-my-project-"
   assert_not_contains "$(calls)" "volume rm"
   run_cli rm --volume
-  assert_contains "$(calls)" "volume rm claude-box-my-project-"
+  assert_contains "$(calls)" "volume rm claude-ide-box-my-project-"
 }
 
 test_shell_runs_bash_in_project_container() {
@@ -241,7 +241,7 @@ test_shell_runs_bash_in_project_container() {
 test_status_names_container() {
   run_cli status
   assert_status 0 "$STATUS"
-  assert_contains "$OUT" "claude-box-my-project-"
+  assert_contains "$OUT" "claude-ide-box-my-project-"
   assert_contains "$OUT" "$PROJECT"
 }
 
@@ -249,7 +249,7 @@ test_logs_show_wrapper_log_and_denied_requests() {
   run_wrapper --version
   run_cli logs
   assert_status 0 "$STATUS"
-  assert_contains "$OUT" "claude-box-exec"
+  assert_contains "$OUT" "claude-ide-box-exec"
   assert_contains "$OUT" "TCP_DENIED/403"
   assert_not_contains "$OUT" "TCP_TUNNEL/200"
 }
@@ -260,7 +260,7 @@ test_login_token_stdin() {
   STATUS=$?
   set -e
   assert_status 0 "$STATUS"
-  local f="$HOME/.config/claude-box/token"
+  local f="$HOME/.config/claude-ide-box/token"
   assert_eq "sk-ant-oat01-abc" "$(cat "$f")"
   # shellcheck disable=SC2012 # ls is the portable way to read a mode string
   assert_eq "-rw-------" "$(ls -l "$f" | cut -c1-10)"
@@ -273,7 +273,7 @@ test_login_rejects_garbage_token() {
   STATUS=$?
   set -e
   assert_nonzero "$STATUS"
-  assert_file_missing "$HOME/.config/claude-box/token"
+  assert_file_missing "$HOME/.config/claude-ide-box/token"
 }
 
 # --- doctor -----------------------------------------------------------------
@@ -299,15 +299,15 @@ ide_settings() {
 }
 
 wrapper_real() {
-  printf '%s/claude-box-exec\n' "$(cd -P "$REPO_DIR/bin" && pwd -P)"
+  printf '%s/claude-ide-box-exec\n' "$(cd -P "$REPO_DIR/bin" && pwd -P)"
 }
 
 healthy_host() {
   fake_ps "  1 /sbin/init
-  200 /usr/bin/docker exec -i -w /p claude-box-p-1234 claude --verbose"
-  mkdir -p "$HOME/.config/claude-box"
-  printf 'sk-ant-oat01-x\n' >"$HOME/.config/claude-box/token"
-  chmod 600 "$HOME/.config/claude-box/token"
+  200 /usr/bin/docker exec -i -w /p claude-ide-box-p-1234 claude --verbose"
+  mkdir -p "$HOME/.config/claude-ide-box"
+  printf 'sk-ant-oat01-x\n' >"$HOME/.config/claude-ide-box/token"
+  chmod 600 "$HOME/.config/claude-ide-box/token"
   echo "true" >"$FAKE_DOCKER_DIR/state"
   make_extensions
   run_cli guard

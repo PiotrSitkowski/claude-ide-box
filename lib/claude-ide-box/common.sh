@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034 # settings and paths defined here are read by the scripts that source this file
-# Shared functions for claude-box-exec and claude-box.
+# Shared functions for claude-ide-box-exec and claude-ide-box.
 #
 # Must run on bash 3.2 with BSD or GNU userland: no associative arrays, no
 # mapfile, no ${var,,}, no flock/timeout/readlink -f/stat -c/sed -i.
@@ -15,11 +15,11 @@ CB_VERSION="0.1.0"
 
 cb_init_paths() {
   if [ -z "${HOME:-}" ]; then
-    echo "claude-box: HOME is not set" >&2
+    echo "claude-ide-box: HOME is not set" >&2
     exit 1
   fi
-  CB_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-box"
-  CB_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-box"
+  CB_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-ide-box"
+  CB_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-ide-box"
   CB_CONFIG_FILE="$CB_CONFIG_DIR/config"
   CB_PROJECTS_DIR="$CB_CONFIG_DIR/projects"
   CB_TOKEN_FILE="$CB_CONFIG_DIR/token"
@@ -131,7 +131,7 @@ cb_to_project_path() {
 # Logging. Nothing here ever writes to stdout.
 # --------------------------------------------------------------------------
 
-CB_LOG_STDERR="${CLAUDE_BOX_DEBUG:-0}"
+CB_LOG_STDERR="${CLAUDE_IDE_BOX_DEBUG:-0}"
 
 cb_timestamp() {
   date '+%Y-%m-%dT%H:%M:%S%z'
@@ -142,21 +142,21 @@ cb_log() {
     printf '%s [%s] %s\n' "$(cb_timestamp)" "$$" "$*" >>"$CB_LOG_FILE" 2>/dev/null || true
   fi
   if [ "$CB_LOG_STDERR" = "1" ]; then
-    printf 'claude-box: %s\n' "$*" >&2
+    printf 'claude-ide-box: %s\n' "$*" >&2
   fi
 }
 
 cb_warn() {
   cb_log "WARNING: $*"
   if [ "$CB_LOG_STDERR" != "1" ]; then
-    printf 'claude-box: warning: %s\n' "$*" >&2
+    printf 'claude-ide-box: warning: %s\n' "$*" >&2
   fi
 }
 
 cb_die() {
   cb_log "ERROR: $*"
   if [ "$CB_LOG_STDERR" != "1" ]; then
-    printf 'claude-box: error: %s\n' "$*" >&2
+    printf 'claude-ide-box: error: %s\n' "$*" >&2
   fi
   exit 1
 }
@@ -170,7 +170,7 @@ cb_init_state() {
   if mkdir -p "$CB_STATE_DIR" "$CB_LOCK_DIR" 2>/dev/null && : >>"$CB_LOG_FILE" 2>/dev/null; then
     :
   else
-    printf 'claude-box: warning: cannot write %s; logging to stderr only\n' "$CB_LOG_FILE" >&2
+    printf 'claude-ide-box: warning: cannot write %s; logging to stderr only\n' "$CB_LOG_FILE" >&2
     CB_LOG_FILE=""
     CB_LOG_STDERR=1
   fi
@@ -369,16 +369,16 @@ cb_project_hash() {
 }
 
 cb_container_name() {
-  printf '%s-%s-%s\n' "${CB_INSTANCE:-claude-box}" "$(cb_sanitize_name "$(basename "$1")")" "$(cb_project_hash "$1")"
+  printf '%s-%s-%s\n' "${CB_INSTANCE:-claude-ide-box}" "$(cb_sanitize_name "$(basename "$1")")" "$(cb_project_hash "$1")"
 }
 
-# CLAUDE_BOX_INSTANCE namespaces every Docker object claude-box creates. It
+# CLAUDE_IDE_BOX_INSTANCE namespaces every Docker object claude-ide-box creates. It
 # exists so the integration tests can run next to a real installation; normal
 # use never sets it.
-CB_INSTANCE="${CLAUDE_BOX_INSTANCE:-claude-box}"
+CB_INSTANCE="${CLAUDE_IDE_BOX_INSTANCE:-claude-ide-box}"
 case "$CB_INSTANCE" in
   *[!a-z0-9-]* | "" | -*)
-    echo "claude-box: invalid CLAUDE_BOX_INSTANCE '$CB_INSTANCE'" >&2
+    echo "claude-ide-box: invalid CLAUDE_IDE_BOX_INSTANCE '$CB_INSTANCE'" >&2
     exit 1
     ;;
 esac
@@ -446,8 +446,8 @@ cb_set_project() {
 # lack /usr/local/bin or /opt/homebrew/bin.
 cb_find_docker() {
   local c
-  if [ -n "${CLAUDE_BOX_DOCKER:-}" ]; then
-    CB_DOCKER="$CLAUDE_BOX_DOCKER"
+  if [ -n "${CLAUDE_IDE_BOX_DOCKER:-}" ]; then
+    CB_DOCKER="$CLAUDE_IDE_BOX_DOCKER"
   elif c="$(command -v docker 2>/dev/null)" && [ -n "$c" ]; then
     CB_DOCKER="$c"
   else
@@ -488,7 +488,7 @@ cb_require_docker() {
 
 cb_require_network() {
   cb_docker network inspect "$CB_NETWORK_INTERNAL" >/dev/null 2>&1 ||
-    cb_die "network $CB_NETWORK_INTERNAL not found - run 'claude-box setup'"
+    cb_die "network $CB_NETWORK_INTERNAL not found - run 'claude-ide-box setup'"
 }
 
 # Print "<internal> <options> <subnet>" of the internal network, or nothing.
@@ -760,7 +760,7 @@ cb_check_mask_record() {
     fi
   done <"$record"
   if [ -n "$missing" ]; then
-    cb_die "masked path(s) were moved, replaced or deleted:$missing - this can be an attempt from inside the container to escape a mask. Check the project; if you moved or deleted them yourself, run 'claude-box up --recreate' in $CB_PROJECT_DIR."
+    cb_die "masked path(s) were moved, replaced or deleted:$missing - this can be an attempt from inside the container to escape a mask. Check the project; if you moved or deleted them yourself, run 'claude-ide-box up --recreate' in $CB_PROJECT_DIR."
   fi
 }
 
@@ -784,7 +784,7 @@ CB_END
 # --------------------------------------------------------------------------
 
 # Set CB_UID/CB_GID: the container user's IDs (the host user's, or 1000
-# when claude-box runs as root, or CONTAINER_UID/CONTAINER_GID).
+# when claude-ide-box runs as root, or CONTAINER_UID/CONTAINER_GID).
 cb_container_uid() {
   CB_UID="${CFG_CONTAINER_UID:-$(id -u)}"
   CB_GID="${CFG_CONTAINER_GID:-$(id -g)}"
@@ -814,9 +814,9 @@ cb_build_run_args() {
 
   CB_RUN_ARGS=(
     --name "$CB_NAME"
-    --hostname claude-box
-    --label "io.claude-box.project=$CB_PROJECT_DIR"
-    --label "io.claude-box.managed=1"
+    --hostname claude-ide-box
+    --label "io.claude-ide-box.project=$CB_PROJECT_DIR"
+    --label "io.claude-ide-box.managed=1"
     --network "$CB_NETWORK_INTERNAL"
     --dns 127.0.0.1
     --cap-drop ALL
@@ -885,19 +885,19 @@ cb_ensure_container() {
   cb_lock "$CB_NAME"
   if ! image_id="$(cb_docker image inspect --format '{{.Id}}' "$image" 2>/dev/null)"; then
     cb_require_docker
-    cb_die "image $image not found - run 'claude-box setup' (with --profile $CFG_PROFILE for a profile)"
+    cb_die "image $image not found - run 'claude-ide-box setup' (with --profile $CFG_PROFILE for a profile)"
   fi
 
   cb_build_run_args
   hash="$(cb_run_args_hash "$image_id")"
 
-  state="$(cb_docker inspect --format '{{.State.Running}} {{index .Config.Labels "io.claude-box.config"}}' "$CB_NAME" 2>/dev/null || true)"
+  state="$(cb_docker inspect --format '{{.State.Running}} {{index .Config.Labels "io.claude-ide-box.config"}}' "$CB_NAME" 2>/dev/null || true)"
   if [ -n "$state" ]; then
     running="${state%% *}"
     label="${state#* }"
     if [ "$label" != "$hash" ]; then
       if [ "$running" = "true" ] && cb_container_busy; then
-        cb_die "container $CB_NAME runs with an outdated configuration (masks, image or settings changed) and a Claude session is active in it. Close the sessions and run 'claude-box up --recreate' in $CB_PROJECT_DIR."
+        cb_die "container $CB_NAME runs with an outdated configuration (masks, image or settings changed) and a Claude session is active in it. Close the sessions and run 'claude-ide-box up --recreate' in $CB_PROJECT_DIR."
       fi
       cb_log "configuration of $CB_NAME changed; recreating it"
       cb_docker rm -f "$CB_NAME" >/dev/null 2>&1 || cb_die "cannot remove outdated container $CB_NAME"
@@ -918,7 +918,7 @@ cb_ensure_container() {
     cb_check_mask_record
     local -a args
     local a prev=""
-    args=(run -d --label "io.claude-box.config=$hash")
+    args=(run -d --label "io.claude-ide-box.config=$hash")
     for a in "${CB_RUN_ARGS[@]}"; do
       if [ "$prev" = "--cpus" ]; then
         a="$(cb_cpus)"
@@ -943,7 +943,7 @@ cb_ensure_container() {
 # --------------------------------------------------------------------------
 
 # Names that match the allowed prefixes but must not cross: they carry host
-# paths, IDE connection details, or settings claude-box controls itself.
+# paths, IDE connection details, or settings claude-ide-box controls itself.
 CB_ENV_DENY="CLAUDE_CONFIG_DIR CLAUDE_CODE_SSE_PORT CLAUDE_CODE_GIT_BASH_PATH CLAUDE_CODE_TMPDIR
 CLAUDE_CODE_SHELL CLAUDE_CODE_SHELL_PREFIX CLAUDE_CODE_PROCESS_WRAPPER CLAUDE_CODE_CLIENT_CERT
 CLAUDE_CODE_CLIENT_KEY CLAUDE_CODE_CLIENT_KEY_PASSPHRASE CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC

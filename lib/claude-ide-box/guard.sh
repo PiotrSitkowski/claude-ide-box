@@ -1,11 +1,11 @@
 # shellcheck shell=bash
 # guard: replace the Claude Code binary bundled with the IDE extension by a
-# symlink to claude-box-exec, so the extension reaches the container even if it
+# symlink to claude-ide-box-exec, so the extension reaches the container even if it
 # ignores claudeCode.claudeProcessWrapper (as 2.1.131 did) or runs the binary
 # directly. The original is kept as "<binary>.orig" with its execute bits
-# removed; nothing in claude-box ever executes it.
+# removed; nothing in claude-ide-box ever executes it.
 
-# Extension directories of every IDE claude-box knows about (see
+# Extension directories of every IDE claude-ide-box knows about (see
 # docs/PLATFORM-NOTES.md). EXTENSION_DIRS in the config adds more.
 cb_extension_roots() {
   local d
@@ -88,7 +88,7 @@ cb_guard_apply_locked() {
         continue
         ;;
       foreign)
-        # A symlink to something else, e.g. an older claude-box location.
+        # A symlink to something else, e.g. an older claude-ide-box location.
         ln -sfn "$wrapper" "$b"
         ;;
       unguarded)

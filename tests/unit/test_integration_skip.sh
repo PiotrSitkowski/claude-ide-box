@@ -13,7 +13,7 @@ test_integration_skips_loudly_without_docker() {
 
 test_integration_fails_without_docker_when_required() {
   set +e
-  OUT="$(FAKE_DOCKER_DOWN=1 CLAUDE_BOX_REQUIRE_DOCKER=1 bash "$REPO_DIR/tests/integration/run.sh" 2>&1)"
+  OUT="$(FAKE_DOCKER_DOWN=1 CLAUDE_IDE_BOX_REQUIRE_DOCKER=1 bash "$REPO_DIR/tests/integration/run.sh" 2>&1)"
   STATUS=$?
   set -e
   assert_nonzero "$STATUS"

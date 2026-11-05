@@ -23,7 +23,7 @@ EOS
   local bashdir
   bashdir="$(dirname "$BASH")"
   export PATH="$SANDBOX/bin:$bashdir:/usr/bin:/bin:/usr/sbin:/sbin"
-  unset CLAUDE_BOX_DOCKER CLAUDE_BOX_DEBUG DOCKER_HOST DOCKER_CONTEXT || true
+  unset CLAUDE_IDE_BOX_DOCKER CLAUDE_IDE_BOX_DEBUG DOCKER_HOST DOCKER_CONTEXT || true
   # Drop anything the developer's shell may have that the wrapper would forward.
   local n
   for n in $(compgen -e); do
@@ -33,8 +33,8 @@ EOS
   done
   PROJECT="$SANDBOX/work/My Project"
   mkdir -p "$PROJECT"
-  WRAPPER="$REPO_DIR/bin/claude-box-exec"
-  CLI="$REPO_DIR/bin/claude-box"
+  WRAPPER="$REPO_DIR/bin/claude-ide-box-exec"
+  CLI="$REPO_DIR/bin/claude-ide-box"
 }
 
 # run_wrapper [ARGS...] - runs the wrapper in $PROJECT; sets OUT, ERR, STATUS.

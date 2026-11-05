@@ -1,11 +1,11 @@
-# claude-box "php" profile: PHP 8.3 CLI with the extensions PrestaShop needs,
-# composer and the MariaDB client, layered on top of the claude-box base image.
+# claude-ide-box "php" profile: PHP 8.3 CLI with the extensions PrestaShop needs,
+# composer and the MariaDB client, layered on top of the claude-ide-box base image.
 #
 # PHP 8.3 is not packaged in Debian bookworm (it ships 8.2). Instead of adding a
 # third-party apt repository, the PHP build is taken from the official
 # php:8.3-cli-bookworm image (same Debian release, same ABI) and only its
 # runtime libraries are installed from Debian.
-ARG BASE_IMAGE=claude-box/base:latest
+ARG BASE_IMAGE=claude-ide-box/base:latest
 ARG PHP_IMAGE=php:8.3-cli-bookworm
 ARG COMPOSER_IMAGE=composer:2
 

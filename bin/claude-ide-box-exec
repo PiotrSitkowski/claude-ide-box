@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# claude-box-exec - drop-in replacement for the `claude` binary that runs
-# Claude Code inside the project's claude-box container.
+# claude-ide-box-exec - drop-in replacement for the `claude` binary that runs
+# Claude Code inside the project's claude-ide-box container.
 #
 # Set it as "claudeCode.claudeProcessWrapper" in the IDE's USER settings.
-# The extension calls it as:  claude-box-exec [<bundled binary>] <claude args>
-# `claude-box guard` also symlinks the extension's bundled binary to this file,
+# The extension calls it as:  claude-ide-box-exec [<bundled binary>] <claude args>
+# `claude-ide-box guard` also symlinks the extension's bundled binary to this file,
 # so it is reached even if the extension ignores the wrapper setting.
 #
 # Contract:
 #   - stdout carries nothing but the stdout of `claude` in the container;
-#   - diagnostics go to $XDG_STATE_HOME/claude-box/wrapper.log and stderr;
+#   - diagnostics go to $XDG_STATE_HOME/claude-ide-box/wrapper.log and stderr;
 #   - every failure exits non-zero; nothing is ever executed on the host
 #     except the docker CLI.
 set -euo pipefail
@@ -24,7 +24,7 @@ self="$0"
 n=0
 while [ -L "$self" ]; do
   n=$((n + 1))
-  [ "$n" -le 40 ] || { echo "claude-box: symlink loop at $0" >&2; exit 1; }
+  [ "$n" -le 40 ] || { echo "claude-ide-box: symlink loop at $0" >&2; exit 1; }
   link="$(readlink "$self")"
   case "$link" in
     /*) self="$link" ;;
@@ -33,14 +33,14 @@ while [ -L "$self" ]; do
 done
 CB_SELF="$(cd -P "$(dirname "$self")" && pwd -P)/$(basename "$self")"
 CB_ROOT="$(dirname "$(dirname "$CB_SELF")")"
-CB_LIB="$CB_ROOT/lib/claude-box"
+CB_LIB="$CB_ROOT/lib/claude-ide-box"
 if [ ! -f "$CB_LIB/common.sh" ]; then
-  echo "claude-box: cannot find $CB_LIB/common.sh (broken installation)" >&2
+  echo "claude-ide-box: cannot find $CB_LIB/common.sh (broken installation)" >&2
   exit 1
 fi
-# shellcheck source=lib/claude-box/common.sh
+# shellcheck source=lib/claude-ide-box/common.sh
 . "$CB_LIB/common.sh"
-# shellcheck source=lib/claude-box/guard.sh
+# shellcheck source=lib/claude-ide-box/guard.sh
 . "$CB_LIB/guard.sh"
 
 cb_init_paths
@@ -49,7 +49,7 @@ cb_init_state
 # ---------------------------------------------------------------------------
 # 1. Log the invocation: date, PWD, full arguments, environment NAMES.
 # ---------------------------------------------------------------------------
-cb_log "---- claude-box-exec $CB_VERSION invoked as $0"
+cb_log "---- claude-ide-box-exec $CB_VERSION invoked as $0"
 cb_log "pwd: ${PWD:-?}"
 cb_log "argv: $(cb_quote_args "$@")"
 cb_log "env names: $(compgen -e | tr '\n' ' ')"

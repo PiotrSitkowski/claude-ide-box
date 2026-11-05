@@ -2,29 +2,29 @@
 # shellcheck disable=SC2015 # "check && ok || not_ok" is safe: ok() always succeeds
 # Integration tests against a real Docker daemon.
 #
-# Builds the images, runs `claude-box setup` in an isolated namespace
-# (CLAUDE_BOX_INSTANCE=cbit, its own subnet, a throw-away HOME) and checks the
+# Builds the images, runs `claude-ide-box setup` in an isolated namespace
+# (CLAUDE_IDE_BOX_INSTANCE=cbit, its own subnet, a throw-away HOME) and checks the
 # sandbox from inside a project container. Without a reachable Docker daemon
-# the tests are SKIPPED and say so; with CLAUDE_BOX_REQUIRE_DOCKER=1 a missing
+# the tests are SKIPPED and say so; with CLAUDE_IDE_BOX_REQUIRE_DOCKER=1 a missing
 # daemon is a failure instead.
 #
 # Environment (all optional):
-#   CLAUDE_BOX_IT_BASE_IMAGE        base for the claude-box image (default: config default)
-#   CLAUDE_BOX_IT_PROXY_BASE_IMAGE  base for the proxy image
-#   CLAUDE_BOX_IT_BUILD_NETWORK     `docker build --network` value
-#   CLAUDE_BOX_IT_UPSTREAM_PROXY    host:port of a parent proxy for squid
-#   CLAUDE_BOX_IT_SUBNET            internal subnet (default 172.30.98.0/24)
-#   CLAUDE_BOX_IT_ALLOWED_URL       URL that must pass (default https://api.anthropic.com/)
-#   CLAUDE_BOX_IT_PROFILES          extra image profiles to build and test (e.g. "php")
-#   CLAUDE_BOX_IT_KEEP=1            keep containers, networks and volumes afterwards
+#   CLAUDE_IDE_BOX_IT_BASE_IMAGE        base for the claude-ide-box image (default: config default)
+#   CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE  base for the proxy image
+#   CLAUDE_IDE_BOX_IT_BUILD_NETWORK     `docker build --network` value
+#   CLAUDE_IDE_BOX_IT_UPSTREAM_PROXY    host:port of a parent proxy for squid
+#   CLAUDE_IDE_BOX_IT_SUBNET            internal subnet (default 172.30.98.0/24)
+#   CLAUDE_IDE_BOX_IT_ALLOWED_URL       URL that must pass (default https://api.anthropic.com/)
+#   CLAUDE_IDE_BOX_IT_PROFILES          extra image profiles to build and test (e.g. "php")
+#   CLAUDE_IDE_BOX_IT_KEEP=1            keep containers, networks and volumes afterwards
 set -euo pipefail
 
 REPO_DIR="$(cd -P "$(dirname "$0")/../.." && pwd -P)"
-export CLAUDE_BOX_INSTANCE=cbit
-SUBNET="${CLAUDE_BOX_IT_SUBNET:-172.30.98.0/24}"
+export CLAUDE_IDE_BOX_INSTANCE=cbit
+SUBNET="${CLAUDE_IDE_BOX_IT_SUBNET:-172.30.98.0/24}"
 PREFIX3="${SUBNET%.*}"
 PROXY_IP="$PREFIX3.2"
-ALLOWED_URL="${CLAUDE_BOX_IT_ALLOWED_URL:-https://api.anthropic.com/}"
+ALLOWED_URL="${CLAUDE_IDE_BOX_IT_ALLOWED_URL:-https://api.anthropic.com/}"
 
 PASS=0
 FAIL=0
@@ -46,7 +46,7 @@ if ! command -v docker >/dev/null 2>&1 || ! docker version --format '{{.Server.V
   echo " INTEGRATION TESTS SKIPPED: no reachable Docker daemon."
   echo " Nothing was verified. Run them on a machine with Docker."
   echo "======================================================================"
-  if [ "${CLAUDE_BOX_REQUIRE_DOCKER:-0}" = "1" ]; then
+  if [ "${CLAUDE_IDE_BOX_REQUIRE_DOCKER:-0}" = "1" ]; then
     exit 1
   fi
   exit 0
@@ -57,13 +57,13 @@ WORK="$(cd -P "$WORK" && pwd -P)"
 export HOME="$WORK/home"
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_STATE_HOME="$HOME/.local/state"
-mkdir -p "$XDG_CONFIG_HOME/claude-box"
+mkdir -p "$XDG_CONFIG_HOME/claude-ide-box"
 for v in $(compgen -e); do
   case "$v" in CLAUDE_CODE_* | ANTHROPIC_* | MCP_* | CLAUDE_AGENT_SDK*) unset "$v" ;; esac
 done
 
-CLI="$REPO_DIR/bin/claude-box"
-WRAPPER="$REPO_DIR/bin/claude-box-exec"
+CLI="$REPO_DIR/bin/claude-ide-box"
+WRAPPER="$REPO_DIR/bin/claude-ide-box-exec"
 PROJECT="$WORK/it project"
 PROJECT_B="$WORK/second"
 mkdir -p "$PROJECT" "$PROJECT_B"
@@ -71,7 +71,7 @@ mkdir -p "$PROJECT" "$PROJECT_B"
 HOST_LISTENER_PID=""
 cleanup() {
   [ -z "$HOST_LISTENER_PID" ] || kill "$HOST_LISTENER_PID" 2>/dev/null || true
-  if [ "${CLAUDE_BOX_IT_KEEP:-0}" != "1" ]; then
+  if [ "${CLAUDE_IDE_BOX_IT_KEEP:-0}" != "1" ]; then
     docker ps -aq --filter "name=^cbit-" | xargs docker rm -f >/dev/null 2>&1 || true
     docker volume ls -q --filter "name=^cbit-" | xargs docker volume rm >/dev/null 2>&1 || true
     docker network rm cbit-internal cbit-egress >/dev/null 2>&1 || true
@@ -85,23 +85,23 @@ trap cleanup EXIT
 {
   echo "SUBNET=$SUBNET"
   echo "PROXY_IP=$PROXY_IP"
-  [ -z "${CLAUDE_BOX_IT_BASE_IMAGE:-}" ] || echo "BASE_IMAGE=$CLAUDE_BOX_IT_BASE_IMAGE"
-  [ -z "${CLAUDE_BOX_IT_PROXY_BASE_IMAGE:-}" ] || echo "PROXY_BASE_IMAGE=$CLAUDE_BOX_IT_PROXY_BASE_IMAGE"
-  [ -z "${CLAUDE_BOX_IT_BUILD_NETWORK:-}" ] || echo "BUILD_NETWORK=$CLAUDE_BOX_IT_BUILD_NETWORK"
-  [ -z "${CLAUDE_BOX_IT_UPSTREAM_PROXY:-}" ] || echo "UPSTREAM_PROXY=$CLAUDE_BOX_IT_UPSTREAM_PROXY"
-} >"$XDG_CONFIG_HOME/claude-box/config"
+  [ -z "${CLAUDE_IDE_BOX_IT_BASE_IMAGE:-}" ] || echo "BASE_IMAGE=$CLAUDE_IDE_BOX_IT_BASE_IMAGE"
+  [ -z "${CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE:-}" ] || echo "PROXY_BASE_IMAGE=$CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE"
+  [ -z "${CLAUDE_IDE_BOX_IT_BUILD_NETWORK:-}" ] || echo "BUILD_NETWORK=$CLAUDE_IDE_BOX_IT_BUILD_NETWORK"
+  [ -z "${CLAUDE_IDE_BOX_IT_UPSTREAM_PROXY:-}" ] || echo "UPSTREAM_PROXY=$CLAUDE_IDE_BOX_IT_UPSTREAM_PROXY"
+} >"$XDG_CONFIG_HOME/claude-ide-box/config"
 
 echo "== docker $(docker version --format '{{.Server.Version}}'), host $(uname -sm), uid $(id -u)"
 echo "== config:"
-sed 's/^/   /' "$XDG_CONFIG_HOME/claude-box/config"
+sed 's/^/   /' "$XDG_CONFIG_HOME/claude-ide-box/config"
 
 # Leftovers of an interrupted earlier run.
 docker ps -aq --filter "name=^cbit-" | xargs docker rm -f >/dev/null 2>&1 || true
 docker network rm cbit-internal cbit-egress >/dev/null 2>&1 || true
 
-echo "== claude-box setup"
+echo "== claude-ide-box setup"
 setup_args=()
-for p in ${CLAUDE_BOX_IT_PROFILES:-}; do
+for p in ${CLAUDE_IDE_BOX_IT_PROFILES:-}; do
   setup_args+=(--profile "$p")
 done
 if ! "$CLI" setup ${setup_args[@]+"${setup_args[@]}"} >"$WORK/setup.log" 2>&1; then
@@ -120,11 +120,11 @@ printf '{}\n' >"$PROJECT/.vscode/settings.json"
 
 if ! (cd "$PROJECT" && "$CLI" up) >"$WORK/up.log" 2>&1; then
   cat "$WORK/up.log"
-  not_ok "claude-box up creates the project container"
+  not_ok "claude-ide-box up creates the project container"
   exit 1
 fi
-ok "claude-box up creates the project container"
-# The container name of a project, as claude-box computes it.
+ok "claude-ide-box up creates the project container"
+# The container name of a project, as claude-ide-box computes it.
 container_name() {
   (cd "$1" && "$CLI" status | awk '/^container:/{print $2}')
 }
@@ -256,9 +256,9 @@ fi
 echo "== (g) wrapper stdout"
 out="$(cd "$PROJECT" && "$WRAPPER" /fake/native-binary/claude --version 2>"$WORK/wrapper.err")"
 if printf '%s' "$out" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+ \(Claude Code\)$' && [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 1 ]; then
-  ok "claude-box-exec /fake/native-binary/claude --version prints only the version ($out)"
+  ok "claude-ide-box-exec /fake/native-binary/claude --version prints only the version ($out)"
 else
-  not_ok "claude-box-exec --version prints only the version" "stdout: $out"$'\n'"stderr: $(cat "$WORK/wrapper.err")"
+  not_ok "claude-ide-box-exec --version prints only the version" "stdout: $out"$'\n'"stderr: $(cat "$WORK/wrapper.err")"
 fi
 
 # ---------------------------------------------------------------------------
@@ -293,7 +293,7 @@ fi
 
 echo "== extra: Claude Code reaches the API through the proxy without DNS"
 tunnels_before="$(docker logs cbit-proxy 2>/dev/null | grep -c 'TCP_TUNNEL.*CONNECT api.anthropic.com:443' || true)"
-out="$(cd "$PROJECT" && ANTHROPIC_API_KEY=sk-ant-api03-claude-box-invalid-key "$WRAPPER" -p "say hi" 2>&1 </dev/null || true)"
+out="$(cd "$PROJECT" && ANTHROPIC_API_KEY=sk-ant-api03-claude-ide-box-invalid-key "$WRAPPER" -p "say hi" 2>&1 </dev/null || true)"
 tunnels_after="$(docker logs cbit-proxy 2>/dev/null | grep -c 'TCP_TUNNEL.*CONNECT api.anthropic.com:443' || true)"
 if [ "$tunnels_after" -gt "$tunnels_before" ]; then
   ok "claude opened $((tunnels_after - tunnels_before)) tunnel(s) to api.anthropic.com:443 through squid"
@@ -318,8 +318,8 @@ v="$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' cbit-proxy)"
 [ "$v" = true ] && ok "proxy root filesystem is read-only" || not_ok "proxy root filesystem is read-only" "$v"
 logs="$(cd "$PROJECT" && "$CLI" logs 2>&1 || true)"
 case "$logs" in
-  *TCP_DENIED*example.com*) ok "claude-box logs shows the denied request" ;;
-  *) not_ok "claude-box logs shows the denied request" "$logs" ;;
+  *TCP_DENIED*example.com*) ok "claude-ide-box logs shows the denied request" ;;
+  *) not_ok "claude-ide-box logs shows the denied request" "$logs" ;;
 esac
 
 echo "== extra: allowlist changes apply without restarting the proxy"
@@ -329,12 +329,12 @@ after="$(in_box "curl -s -o /dev/null -w '%{http_code}' --max-time 30 https://pa
 case "$before:$after" in
   000:[1-5][0-9][0-9] | 403:[1-5][0-9][0-9])
     if [ "$after" != 403 ]; then
-      ok "claude-box allow takes effect immediately (before: $before, after: HTTP $after)"
+      ok "claude-ide-box allow takes effect immediately (before: $before, after: HTTP $after)"
     else
-      not_ok "claude-box allow takes effect immediately" "before $before, after $after"$'\n'"$allow_out"
+      not_ok "claude-ide-box allow takes effect immediately" "before $before, after $after"$'\n'"$allow_out"
     fi
     ;;
-  *) not_ok "claude-box allow takes effect immediately" "before $before, after $after"$'\n'"$allow_out" ;;
+  *) not_ok "claude-ide-box allow takes effect immediately" "before $before, after $after"$'\n'"$allow_out" ;;
 esac
 case "$allow_out" in
   *"proxy reloaded"*) ok "the reload is confirmed by squid" ;;
@@ -396,13 +396,13 @@ case "$st:$out" in
   *) not_ok "the home directory is refused as a project" "$out" ;;
 esac
 
-if printf ' %s ' "${CLAUDE_BOX_IT_PROFILES:-}" | grep -q ' php '; then
+if printf ' %s ' "${CLAUDE_IDE_BOX_IT_PROFILES:-}" | grep -q ' php '; then
   echo "== profile php"
   PHP_PROJECT="$WORK/php-project"
   mkdir -p "$PHP_PROJECT"
-  mkdir -p "$XDG_CONFIG_HOME/claude-box/projects"
+  mkdir -p "$XDG_CONFIG_HOME/claude-ide-box/projects"
   php_name="$(container_name "$PHP_PROJECT")"
-  echo 'PROFILE=php' >"$XDG_CONFIG_HOME/claude-box/projects/$php_name.conf"
+  echo 'PROFILE=php' >"$XDG_CONFIG_HOME/claude-ide-box/projects/$php_name.conf"
   if (cd "$PHP_PROJECT" && "$CLI" up) >"$WORK/php-up.log" 2>&1; then
     ok "php profile container starts"
     v="$(docker exec "$php_name" php -m 2>&1 | tr '\n' ' ')"
@@ -417,7 +417,7 @@ if printf ' %s ' "${CLAUDE_BOX_IT_PROFILES:-}" | grep -q ' php '; then
     out="$(docker exec -w "$PHP_PROJECT" "$php_name" composer show --all --no-interaction monolog/monolog 2>&1 || true)"
     case "$out" in
       *"name "*monolog/monolog*) ok "composer reaches packagist through the proxy without DNS" ;;
-      *) not_ok "composer reaches packagist through the proxy without DNS" "preset: $preset_out"$'\n'"$(printf '%s\n' "$out" | tail -n 5)"$'\n'"allowlist: $(tr '\n' ' ' <"$XDG_STATE_HOME/claude-box/proxy/allowlist")" ;;
+      *) not_ok "composer reaches packagist through the proxy without DNS" "preset: $preset_out"$'\n'"$(printf '%s\n' "$out" | tail -n 5)"$'\n'"allowlist: $(tr '\n' ' ' <"$XDG_STATE_HOME/claude-ide-box/proxy/allowlist")" ;;
     esac
     "$CLI" preset php off >/dev/null 2>&1 || true
   else

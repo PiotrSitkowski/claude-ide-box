@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Install claude-box for the current user. No root, no system files.
+# Install claude-ide-box for the current user. No root, no system files.
 #
-#   ./install.sh                  install to ~/.local (share/claude-box + bin links)
-#   ./install.sh --prefix DIR     install to DIR/share/claude-box and DIR/bin
-#   ./install.sh --uninstall      undo `claude-box guard`, remove the files
+#   ./install.sh                  install to ~/.local (share/claude-ide-box + bin links)
+#   ./install.sh --prefix DIR     install to DIR/share/claude-ide-box and DIR/bin
+#   ./install.sh --uninstall      undo `claude-ide-box guard`, remove the files
 #
 # Re-running is safe: it replaces the installed copy in place.
 set -euo pipefail
@@ -25,9 +25,9 @@ case "$prefix" in
 esac
 
 src="$(cd -P "$(dirname "$0")" && pwd -P)"
-share="$prefix/share/claude-box"
+share="$prefix/share/claude-ide-box"
 bindir="$prefix/bin"
-commands="claude-box claude-box-exec"
+commands="claude-ide-box claude-ide-box-exec"
 
 # A link we own points into $share; anything else is left alone.
 our_link() {
@@ -38,7 +38,7 @@ do_install() {
   local c
   for c in $commands; do
     if { [ -e "$bindir/$c" ] || [ -L "$bindir/$c" ]; } && ! our_link "$bindir/$c"; then
-      echo "install.sh: $bindir/$c exists and was not installed by claude-box; remove it first" >&2
+      echo "install.sh: $bindir/$c exists and was not installed by claude-ide-box; remove it first" >&2
       exit 1
     fi
   done
@@ -62,11 +62,11 @@ do_install() {
   done
 
   local wrapper
-  wrapper="$(cd -P "$share/bin" && pwd -P)/claude-box-exec"
+  wrapper="$(cd -P "$share/bin" && pwd -P)/claude-ide-box-exec"
   cat <<EOF
-claude-box installed:
-  $bindir/claude-box
-  $bindir/claude-box-exec  ->  $wrapper
+claude-ide-box installed:
+  $bindir/claude-ide-box
+  $bindir/claude-ide-box-exec  ->  $wrapper
 
 Add this to the USER settings.json of each IDE (Antigravity, VS Code, Cursor).
 Never put it in workspace settings: those live in the project, which Claude can edit.
@@ -78,10 +78,10 @@ the project (git hooks and core.fsmonitor would run on the host).
     "git.autoRepositoryDetection": false
 
 Then:
-    claude-box setup     # build images, networks, proxy
-    claude-box login     # subscription token (or export ANTHROPIC_API_KEY)
-    claude-box guard     # route the extension's bundled binary to the wrapper
-    claude-box doctor
+    claude-ide-box setup     # build images, networks, proxy
+    claude-ide-box login     # subscription token (or export ANTHROPIC_API_KEY)
+    claude-ide-box guard     # route the extension's bundled binary to the wrapper
+    claude-ide-box doctor
 EOF
   case ":$PATH:" in
     *":$bindir:"*) ;;
@@ -91,8 +91,8 @@ EOF
 
 do_uninstall() {
   local c
-  if [ -x "$share/bin/claude-box" ]; then
-    "$share/bin/claude-box" guard --undo || echo "install.sh: 'claude-box guard --undo' failed; check your extension directories" >&2
+  if [ -x "$share/bin/claude-ide-box" ]; then
+    "$share/bin/claude-ide-box" guard --undo || echo "install.sh: 'claude-ide-box guard --undo' failed; check your extension directories" >&2
   fi
   for c in $commands; do
     if our_link "$bindir/$c"; then
@@ -101,12 +101,12 @@ do_uninstall() {
   done
   rm -rf "$share"
   cat <<EOF
-claude-box uninstalled. Left in place (remove by hand if you want them gone):
-  ${XDG_CONFIG_HOME:-$HOME/.config}/claude-box       config and token
-  ${XDG_STATE_HOME:-$HOME/.local/state}/claude-box  logs
-  Docker resources:  docker ps -a --filter label=io.claude-box.managed=1
-                     docker volume ls --filter name=claude-box-
-                     docker network rm claude-box-internal claude-box-egress
+claude-ide-box uninstalled. Left in place (remove by hand if you want them gone):
+  ${XDG_CONFIG_HOME:-$HOME/.config}/claude-ide-box       config and token
+  ${XDG_STATE_HOME:-$HOME/.local/state}/claude-ide-box  logs
+  Docker resources:  docker ps -a --filter label=io.claude-ide-box.managed=1
+                     docker volume ls --filter name=claude-ide-box-
+                     docker network rm claude-ide-box-internal claude-ide-box-egress
 Remove "claudeCode.claudeProcessWrapper" from your IDE user settings.
 EOF
 }

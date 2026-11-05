@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1110" height="520" viewBox="0 0 1110 520" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" role="img" aria-labelledby="title desc">
-<title id="title">claude-box architecture</title>
-<desc id="desc">The IDE extension starts claude-box-exec on the host, which runs claude inside a project container via docker exec. The container sits on an internal Docker network with no route and no DNS; its only way out is a squid proxy that allows CONNECT to port 443 of allowlisted domains.</desc>
+<title id="title">Claude IDE Box architecture</title>
+<desc id="desc">The IDE extension starts claude-ide-box-exec on the host, which runs claude inside a project container via docker exec. The container sits on an internal Docker network with no route and no DNS; its only way out is a squid proxy that allows CONNECT to port 443 of allowlisted domains.</desc>
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#59636e"/></marker>
   <marker id="arrowA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f766e"/></marker>
@@ -19,7 +19,7 @@
 <text x="56" y="192" font-size="12" fill="#59636e">claudeProcessWrapper</text>
 <line x1="155" y1="206" x2="155" y2="226" stroke="#59636e" stroke-width="1.5" marker-end="url(#arrow)"/>
 <rect x="40" y="228" width="230" height="74" rx="8" fill="#e6f4f1" stroke="#0f766e" stroke-width="1.5"/>
-<text x="56" y="252" font-size="14" font-weight="600" fill="#0f766e">claude-box-exec</text>
+<text x="56" y="252" font-size="14" font-weight="600" fill="#0f766e">claude-ide-box-exec</text>
 <text x="56" y="272" font-size="12" fill="#59636e">stdout = container stdout only</text>
 <text x="56" y="289" font-size="12" fill="#59636e">fails closed · runs only docker</text>
 <rect x="40" y="324" width="230" height="40" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-dasharray="4 3"/>
@@ -28,13 +28,13 @@
 <text x="40" y="420" font-size="12" fill="#59636e">~/.ssh · ~/.aws · ~/.gitconfig</text>
 <text x="40" y="438" font-size="12" fill="#59636e">home directory · docker.sock</text>
 <text x="40" y="456" font-size="12" fill="#59636e">IDE IPC sockets · other projects</text>
-<text x="40" y="474" font-size="12" fill="#59636e">claude-box config and token file</text>
+<text x="40" y="474" font-size="12" fill="#59636e">claude-ide-box config and token file</text>
 
 <rect x="370" y="20" width="500" height="480" rx="12" fill="#f6f8fa" stroke="#d0d7de"/>
 <text x="390" y="50" font-size="13" font-weight="600" letter-spacing="1.2" fill="#59636e">DOCKER</text>
 
 <rect x="388" y="66" width="272" height="414" rx="10" fill="#eef2f6" stroke="#d0d7de" stroke-dasharray="6 4"/>
-<text x="404" y="90" font-size="12" font-weight="600" fill="#1f2328">claude-box-internal</text>
+<text x="404" y="90" font-size="12" font-weight="600" fill="#1f2328">claude-ide-box-internal</text>
 <text x="404" y="107" font-size="11" fill="#59636e">internal · no route · no DNS</text>
 
 <rect x="404" y="122" width="240" height="250" rx="8" fill="#ffffff" stroke="#0f766e" stroke-width="1.5"/>
@@ -58,7 +58,7 @@
 <text x="420" y="450" font-size="11" fill="#1f2328">✕ other domains  ✕ HTTP  ✕ raw IPs</text>
 
 <rect x="672" y="66" width="180" height="414" rx="10" fill="#eef2f6" stroke="#d0d7de" stroke-dasharray="6 4"/>
-<text x="688" y="90" font-size="12" font-weight="600" fill="#1f2328">claude-box-egress</text>
+<text x="688" y="90" font-size="12" font-weight="600" fill="#1f2328">claude-ide-box-egress</text>
 <text x="688" y="107" font-size="11" fill="#59636e">ordinary bridge</text>
 
 <rect x="684" y="186" width="156" height="118" rx="8" fill="#eef0fb" stroke="#4338ca" stroke-width="1.5"/>
@@ -77,7 +77,7 @@
 <text x="916" y="250" font-size="12" fill="#0f766e">platform.claude.com</text>
 <text x="916" y="268" font-size="12" fill="#0f766e">registry.npmjs.org</text>
 <line x1="916" y1="282" x2="1074" y2="282" stroke="#d0d7de"/>
-<text x="916" y="302" font-size="11" fill="#59636e">+ presets · claude-box allow</text>
+<text x="916" y="302" font-size="11" fill="#59636e">+ presets · per-domain allow</text>
 <line x1="272" y1="265" x2="402" y2="265" stroke="#0f766e" stroke-width="2" marker-start="url(#arrowA)" marker-end="url(#arrowA)"/>
 <text x="330" y="252" font-size="11" text-anchor="middle" fill="#0f766e">docker exec -i</text>
 <text x="330" y="283" font-size="11" text-anchor="middle" fill="#59636e">stdin / stdout</text>

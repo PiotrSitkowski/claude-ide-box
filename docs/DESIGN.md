@@ -1,4 +1,4 @@
-# claude-box - design
+# claude-ide-box - design
 
 Claude Code locked in a container, driven from the IDE extension on the host.
 
@@ -70,9 +70,9 @@ access limited to an allowlist. Claude must not be able to do anything outside t
    document the trade-off. Verify the scheme works on Docker Desktop (macOS, WSL2 backend) as well as
    native Linux Docker - Docker Desktop has its own DNS/proxy layer; document any difference.
    Make the subnet configurable (it may collide with a user's LAN/VPN).
-4. **`bin/claude-box-exec`** - the wrapper for the extension. Requirements:
+4. **`bin/claude-ide-box-exec`** - the wrapper for the extension. Requirements:
    - NOTHING may reach stdout except the stdout of the process in the container. Logs go to a file
-     (`$XDG_STATE_HOME/claude-box/wrapper.log`, default `~/.local/state/claude-box/wrapper.log`) and
+     (`$XDG_STATE_HOME/claude-ide-box/wrapper.log`, default `~/.local/state/claude-ide-box/wrapper.log`) and
      optionally stderr.
    - Logs date, PWD, full arguments and the NAMES (not values) of passed environment variables.
    - Drops leading non-flag arguments (paths to the binary/interpreter) up to the first one
@@ -83,7 +83,7 @@ access limited to an allowlist. Claude must not be able to do anything outside t
      PLATFORM-NOTES). These must work too, or fail with a clear message on stderr.
    - Project directory = PWD at launch. Mounted at the IDENTICAL path inside the container,
      `docker exec -w "$PWD"`.
-   - Container name: `claude-box-<basename>-<first 8 hex of sha256 of the absolute path>`
+   - Container name: `claude-ide-box-<basename>-<first 8 hex of sha256 of the absolute path>`
      (sanitise the basename for Docker's name rules). If the container does not exist or is
      stopped, the wrapper creates/starts it, with a lock against parallel starts (no `flock` on
      macOS - see PLATFORM-NOTES). Fail closed: if Docker is not running, exit with an error and never run
@@ -91,13 +91,13 @@ access limited to an allowlist. Claude must not be able to do anything outside t
    - Passes `CLAUDE_CODE_*`, `CLAUDE_AGENT_SDK*`, `MCP_*` from the host into the container, except
      those holding host paths (e.g. `CLAUDE_CONFIG_DIR`). Token from file (see login).
    - Also works when invoked directly instead of the binary (see guard).
-5. **`bin/claude-box`** - management CLI: `setup` (build images, network, proxy), `login` (one-off
+5. **`bin/claude-ide-box`** - management CLI: `setup` (build images, network, proxy), `login` (one-off
    `claude setup-token` in a temporary container behind the proxy; token saved to
-   `$XDG_CONFIG_HOME/claude-box/token` with mode 600 and passed as `CLAUDE_CODE_OAUTH_TOKEN`),
+   `$XDG_CONFIG_HOME/claude-ide-box/token` with mode 600 and passed as `CLAUDE_CODE_OAUTH_TOKEN`),
    `up`/`down`/`rm` for the current project, `shell` (bash in the project container), `status`,
    `logs` (wrapper + denied proxy requests), `allow <domain>` / `preset <name> on|off`, `guard`,
    `doctor`, `help`.
-6. **Secret masking:** global config OUTSIDE the project (`$XDG_CONFIG_HOME/claude-box/config`),
+6. **Secret masking:** global config OUTSIDE the project (`$XDG_CONFIG_HOME/claude-ide-box/config`),
    never in the project repo, because Claude could modify it. Masked by default (only if they exist;
    files via bind of `/dev/null:ro`, directories via empty tmpfs): `.env`, `.env.*`. PrestaShop
    preset adds: `app/config/parameters.php`, `app/config/parameters.yml`, `config/settings.inc.php`.
@@ -113,7 +113,7 @@ access limited to an allowlist. Claude must not be able to do anything outside t
    default, with an option to turn it off.
 8. **`guard`:** defence against extension regressions. Finds the binary bundled with the extension
    in every known extension directory (see PLATFORM-NOTES for the full list and BOTH bundled-binary
-   layouts) and replaces it with a symlink to `claude-box-exec`, keeping the original as `.orig`.
+   layouts) and replaces it with a symlink to `claude-ide-box-exec`, keeping the original as `.orig`.
    So even if the extension ignores `claudeProcessWrapper`, it still lands in the container. The
    wrapper silently runs guard for new extension versions on every start. Provide `guard --undo`.
    The wrapper never executes the host binary or the `.orig` copy - it only ever runs `docker`.
@@ -139,7 +139,7 @@ access limited to an allowlist. Claude must not be able to do anything outside t
   one and a direct connection without the proxy are blocked, (b) DNS does not work, (c) masked files
   are empty/inaccessible, (d) writes to .git and .vscode fail, (e) writes to the project work and
   files get the host UID, (f) no capabilities and no docker.sock, (g)
-  `claude-box-exec /fake/native-binary/claude --version` returns the version and nothing else on
+  `claude-ide-box-exec /fake/native-binary/claude --version` returns the version and nothing else on
   stdout. Subscription login is not tested automatically.
 - `TESTING.md`: an honest list of what was verified automatically and what needs manual checking on
   a real machine, with a checklist: wrapper argument log after the first launch from Antigravity,

@@ -28,7 +28,7 @@ dependency to install on every runner for no extra coverage.
 | `test_wrapper.sh` | dropping 0, 1 and 2 leading paths; subcommands and `/slash` prompts kept; stdout carries only the container's output; exit status and stdin passed through; container name and sanitisation; identical mount path; hardening flags; masks only for existing files (nested, directories, PrestaShop preset); read-only directories created with normal permissions; `GIT_WRITABLE`; recreate on a new secret file, refusal while a session is active; fail closed without daemon, without docker, without image, for `/`, `$HOME` and its parents; environment passed by name only with deny list and host-path filter; token never on a command line or in the log; host-path flags dropped, inline JSON kept, `..` escapes caught; parallel starts create one container; stale lock removal; invocation through a guard symlink; unknown config key fails closed; CPU clamping; automatic guard; paths with commas, quotes or newlines refused before `docker run` (mount-option injection); a symlinked secret is masked at the logical path when the project path itself contains a symlink; prompts that contain paths are not dropped; `~`-relative env values are not passed; invalid `MEMORY`/`CPUS`/`TMP_SIZE`/UID settings rejected; an active session is recognised for both `claude` and `claude.exe`; nested `.git` directories and files read-only, a new one triggers recreation; masks found inside `node_modules` and `vendor`; a masked file moved away (renamed parent) or replaced by a decoy stops the start until `up --recreate` |
 | `test_cli.sh` | `guard` on both bundled-binary layouts and several versions, idempotence, `--undo`, six concurrent runs keeping the original binary; `allow` validation and proxy reload; presets (`php`, `github` warning, `prestashop` per project); generated allowlist; `setup` (internal network with `inhibit_ipv4`, proxy attached at its fixed IP, UID/GID and version build args, profiles, build failure, no daemon); `up`, `up --recreate`, `down`, `rm`, `rm --volume`, `shell`, `status`, `logs`; `login --token-stdin` (mode 600, rejects garbage); `doctor` (healthy host, `useTerminal: true`, wrapper unset, legacy key, commented-out key, unguarded binary, `claude` running on the host, `claude` on PATH, no daemon, non-internal network, `git.autoRepositoryDetection` warning) |
 | `test_install.sh` | install, settings snippet, idempotence, refusing to overwrite foreign files, no sudo, `--uninstall` undoes guard and keeps config, `--prefix` |
-| `test_integration_skip.sh` | the integration suite says SKIPPED without Docker and fails when `CLAUDE_BOX_REQUIRE_DOCKER=1` |
+| `test_integration_skip.sh` | the integration suite says SKIPPED without Docker and fails when `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` |
 
 ### Results
 
@@ -49,8 +49,8 @@ a symlink, which removed the execute bit from the real wrapper.
 
 ## Integration tests
 
-`tests/integration/run.sh` builds the images, runs `claude-box setup` in its own namespace
-(`CLAUDE_BOX_INSTANCE=cbit`, subnet `172.30.98.0/24`, a throw-away `HOME`), so it never touches a
+`tests/integration/run.sh` builds the images, runs `claude-ide-box setup` in its own namespace
+(`CLAUDE_IDE_BOX_INSTANCE=cbit`, subnet `172.30.98.0/24`, a throw-away `HOME`), so it never touches a
 real installation, and then checks from inside real containers:
 
 | Requirement | Checks |
@@ -61,14 +61,14 @@ real installation, and then checks from inside real containers:
 | (d) read-only | writes to `.git/hooks`, `.git/config`, `.vscode`, `.idea`, `.devcontainer`, `.agent` fail; `.git` cannot be removed, `.vscode` cannot be renamed |
 | (e) ownership | writing the project works; new files belong to the host UID |
 | (f) privileges | `CapEff` and `CapBnd` zero, `NoNewPrivs` 1, non-root, no `docker.sock`, read-only rootfs, no sudo, pids/memory limits and `--init`, home not mounted |
-| (g) wrapper | `claude-box-exec /fake/native-binary/claude --version` prints exactly one line, the version |
-| extra | host listeners unreachable on the internal gateway and `docker0` (with a positive control from the default bridge); Claude Code's API request goes through squid without DNS (tunnel count in the squid log rises, the API answers "Invalid API key" to a fake key); squid runs without capabilities as `proxy` on a read-only rootfs; `claude-box logs` shows the denial; one project's `~/.claude` and files are invisible to another; fail closed with an unreachable daemon and for `$HOME` |
-| allowlist reload | a domain is refused before `claude-box allow` and passes right after it, and squid confirms the reload (it is signalled with SIGHUP; `squid -k reconfigure` depends on a PID file that `squid -N` does not always write, which made the reload fail on Debian's squid 5.7 in CI) |
+| (g) wrapper | `claude-ide-box-exec /fake/native-binary/claude --version` prints exactly one line, the version |
+| extra | host listeners unreachable on the internal gateway and `docker0` (with a positive control from the default bridge); Claude Code's API request goes through squid without DNS (tunnel count in the squid log rises, the API answers "Invalid API key" to a fake key); squid runs without capabilities as `proxy` on a read-only rootfs; `claude-ide-box logs` shows the denial; one project's `~/.claude` and files are invisible to another; fail closed with an unreachable daemon and for `$HOME` |
+| allowlist reload | a domain is refused before `claude-ide-box allow` and passes right after it, and squid confirms the reload (it is signalled with SIGHUP; `squid -k reconfigure` depends on a PID file that `squid -N` does not always write, which made the reload fail on Debian's squid 5.7 in CI) |
 | security fixes | a nested `.git` is read-only after the next start; a directory named `q,src=$HOME,dst=...` with a `.env` inside stops the container from being created |
-| php profile (`CLAUDE_BOX_IT_PROFILES=php`) | PHP 8.3 with the PrestaShop extensions, MariaDB client, composer reaching packagist through the proxy without DNS |
+| php profile (`CLAUDE_IDE_BOX_IT_PROFILES=php`) | PHP 8.3 with the PrestaShop extensions, MariaDB client, composer reaching packagist through the proxy without DNS |
 
 Without a Docker daemon the script prints a banner saying **INTEGRATION TESTS SKIPPED** and that
-nothing was verified; with `CLAUDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is a failure.
+nothing was verified; with `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is a failure.
 
 ### Where they ran
 
@@ -98,15 +98,15 @@ reload failing on Debian's squid 5.7.
 tests/integration/run.sh
 ```
 
-Optional environment: `CLAUDE_BOX_IT_PROFILES=php`, `CLAUDE_BOX_IT_KEEP=1` (keep containers for
-inspection), `CLAUDE_BOX_IT_BASE_IMAGE`, `CLAUDE_BOX_IT_PROXY_BASE_IMAGE`,
-`CLAUDE_BOX_IT_BUILD_NETWORK`, `CLAUDE_BOX_IT_UPSTREAM_PROXY`, `CLAUDE_BOX_IT_SUBNET`.
+Optional environment: `CLAUDE_IDE_BOX_IT_PROFILES=php`, `CLAUDE_IDE_BOX_IT_KEEP=1` (keep containers for
+inspection), `CLAUDE_IDE_BOX_IT_BASE_IMAGE`, `CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE`,
+`CLAUDE_IDE_BOX_IT_BUILD_NETWORK`, `CLAUDE_IDE_BOX_IT_UPSTREAM_PROXY`, `CLAUDE_IDE_BOX_IT_SUBNET`.
 
 ## Not verified automatically
 
 | Item | Why |
 |---|---|
-| Subscription login (`claude-box login`) | needs a real account and a browser |
+| Subscription login (`claude-ide-box login`) | needs a real account and a browser |
 | The IDE extension driving the wrapper | needs a desktop IDE; only the wrapper's contract (argv, stdout, exit codes, stdin) is tested |
 | Docker Desktop (macOS, Windows/WSL2) | no Docker Desktop in CI. Its VM, file sharing, ownership mapping and DNS layer differ from native Linux; in particular `inhibit_ipv4`, `--dns 127.0.0.1` on an internal network and bind-mounting a file over a project path need checking there |
 | Apple Silicon | images are multi-arch by construction (all bases are), not built on arm64 in CI |
@@ -119,11 +119,11 @@ behaviour. Tick per platform.
 
 | # | Check | Linux | WSL2 | macOS |
 |---|---|:-:|:-:|:-:|
-| 1 | `claude-box doctor` passes | ☐ | ☐ | ☐ |
-| 2 | After the first message from the panel, `~/.local/state/claude-box/wrapper.log` shows the argv the extension passed (one leading bundled-binary path with 2.1.318) and env names | ☐ | ☐ | ☐ |
+| 1 | `claude-ide-box doctor` passes | ☐ | ☐ | ☐ |
+| 2 | After the first message from the panel, `~/.local/state/claude-ide-box/wrapper.log` shows the argv the extension passed (one leading bundled-binary path with 2.1.318) and env names | ☐ | ☐ | ☐ |
 | 3 | `ps -A -o pid,args \| grep -i claude` on the host shows only `docker exec ... claude ...`, no native `claude` | ☐ | ☐ | ☐ |
 | 4 | Asking Claude to "read ~/.ssh/id_rsa" fails (no such file in the container) | ☐ | ☐ | ☐ |
-| 5 | Asking Claude to "curl example.com" fails with a proxy 403; `claude-box logs` shows `TCP_DENIED` | ☐ | ☐ | ☐ |
+| 5 | Asking Claude to "curl example.com" fails with a proxy 403; `claude-ide-box logs` shows `TCP_DENIED` | ☐ | ☐ | ☐ |
 | 6 | Asking Claude to print `.env` shows an empty file | ☐ | ☐ | ☐ |
 | 7 | A file edit from the panel appears in the editor | ☐ | ☐ | ☐ |
 | 8 | Diffs and permission prompts work in the panel | ☐ | ☐ | ☐ |

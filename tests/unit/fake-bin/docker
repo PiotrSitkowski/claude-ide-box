@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fake docker CLI for unit tests. Records every call in $FAKE_DOCKER_DIR/calls
-# and emulates just enough behaviour for claude-box. Deliberately prints noise
-# on stdout for commands whose output claude-box must not forward.
+# and emulates just enough behaviour for claude-ide-box. Deliberately prints noise
+# on stdout for commands whose output claude-ide-box must not forward.
 set -euo pipefail
 dir="${FAKE_DOCKER_DIR:?}"
 printf '%q ' "$@" >>"$dir/calls"
@@ -84,7 +84,7 @@ case "$cmd" in
     prev=""
     for a in "$@"; do
       if [ "$prev" = "--label" ]; then
-        case "$a" in io.claude-box.config=*) label="${a#io.claude-box.config=}" ;; esac
+        case "$a" in io.claude-ide-box.config=*) label="${a#io.claude-ide-box.config=}" ;; esac
       fi
       prev="$a"
     done

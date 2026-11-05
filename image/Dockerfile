@@ -1,4 +1,4 @@
-# claude-box base image: Debian bookworm + Node 22 + a pinned Claude Code.
+# claude-ide-box base image: Debian bookworm + Node 22 + a pinned Claude Code.
 #
 # Build arguments:
 #   BASE_IMAGE          Debian bookworm image that already ships Node 22.
@@ -24,19 +24,19 @@ RUN npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE
  && npm cache clean --force \
  && claude --version
 
-COPY create-user.sh /usr/local/sbin/claude-box-create-user
-RUN /usr/local/sbin/claude-box-create-user "${USER_UID}" "${USER_GID}" \
- && rm /usr/local/sbin/claude-box-create-user \
+COPY create-user.sh /usr/local/sbin/claude-ide-box-create-user
+RUN /usr/local/sbin/claude-ide-box-create-user "${USER_UID}" "${USER_GID}" \
+ && rm /usr/local/sbin/claude-ide-box-create-user \
  # The project is bind-mounted and its owner may not match on every Docker
  # flavour (Docker Desktop maps ownership); git must not refuse to work there.
  && git config --system safe.directory '*'
 
 ENV HOME=/home/claude \
     DISABLE_AUTOUPDATER=1 \
-    CLAUDE_BOX=1
+    CLAUDE_IDE_BOX=1
 
-LABEL org.opencontainers.image.title="claude-box" \
-      io.claude-box.claude-code-version="${CLAUDE_CODE_VERSION}"
+LABEL org.opencontainers.image.title="claude-ide-box" \
+      io.claude-ide-box.claude-code-version="${CLAUDE_CODE_VERSION}"
 
 USER claude
 WORKDIR /home/claude

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Unit tests for bin/claude-box-exec against the fake docker.
+# Unit tests for bin/claude-ide-box-exec against the fake docker.
 
 STREAM_ARGS="--output-format stream-json --verbose --input-format stream-json"
 
@@ -73,7 +73,7 @@ test_stdin_is_forwarded() {
 test_container_name_and_workdir() {
   run_wrapper --version
   local expected
-  expected="claude-box-my-project-$(sha8 "$PROJECT")"
+  expected="claude-ide-box-my-project-$(sha8 "$PROJECT")"
   assert_eq "$expected" "$(cat "$FAKE_DOCKER_DIR/exec.name")"
   assert_eq "$PROJECT" "$(cat "$FAKE_DOCKER_DIR/exec.workdir")"
 }
@@ -85,7 +85,7 @@ test_container_name_sanitised() {
   local name
   name="$(cat "$FAKE_DOCKER_DIR/exec.name")"
   case "$name" in
-    claude-box-[a-z0-9]*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    claude-ide-box-[a-z0-9]*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
     *) fail "unexpected container name '$name'" ;;
   esac
   assert_not_contains "$name" "!"
@@ -107,7 +107,7 @@ test_hardening_flags() {
   assert_contains "$a" "--init"
   assert_contains "$a" "--pids-limit"
   assert_contains "$a" "--memory"
-  assert_contains "$a" "--network claude-box-internal"
+  assert_contains "$a" "--network claude-ide-box-internal"
   assert_contains "$a" "--dns 127.0.0.1"
   assert_contains "$a" "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
   assert_not_contains "$a" "docker.sock"
@@ -136,13 +136,13 @@ test_no_mask_when_no_secret_files() {
 }
 
 test_prestashop_mask_preset() {
-  mkdir -p "$PROJECT/app/config" "$HOME/.config/claude-box/projects"
+  mkdir -p "$PROJECT/app/config" "$HOME/.config/claude-ide-box/projects"
   : >"$PROJECT/app/config/parameters.php"
   run_wrapper --version
   assert_not_contains "$(run_args)" "parameters.php"
   local name
   name="$(cat "$FAKE_DOCKER_DIR/exec.name")"
-  echo 'MASK_PRESETS="prestashop"' >"$HOME/.config/claude-box/projects/$name.conf"
+  echo 'MASK_PRESETS="prestashop"' >"$HOME/.config/claude-ide-box/projects/$name.conf"
   run_wrapper --version
   assert_contains "$(run_args)" "dst=$PROJECT/app/config/parameters.php,readonly"
 }
@@ -160,8 +160,8 @@ test_git_writable_option() {
   local name
   run_wrapper --version
   name="$(cat "$FAKE_DOCKER_DIR/exec.name")"
-  mkdir -p "$HOME/.config/claude-box/projects"
-  echo 'GIT_WRITABLE=1' >"$HOME/.config/claude-box/projects/$name.conf"
+  mkdir -p "$HOME/.config/claude-ide-box/projects"
+  echo 'GIT_WRITABLE=1' >"$HOME/.config/claude-ide-box/projects/$name.conf"
   run_wrapper --version
   assert_not_contains "$(run_args)" "dst=$PROJECT/.git,"
   assert_contains "$(run_args)" "dst=$PROJECT/.vscode,readonly"
@@ -198,7 +198,7 @@ test_fail_closed_when_docker_missing() {
   local bashdir
   bashdir="$(dirname "$BASH")"
   export PATH="$SANDBOX/bin:$bashdir:/bin"
-  CLAUDE_BOX_DOCKER="$SANDBOX/nonexistent" run_wrapper --version
+  CLAUDE_IDE_BOX_DOCKER="$SANDBOX/nonexistent" run_wrapper --version
   assert_nonzero "$STATUS"
   assert_eq "" "$OUT"
   assert_file_missing "$FAKE_DOCKER_DIR/host-claude-ran"
@@ -208,7 +208,7 @@ test_fail_closed_when_image_missing() {
   FAKE_DOCKER_NO_IMAGE=1 run_wrapper --version
   assert_nonzero "$STATUS"
   assert_eq "" "$OUT"
-  assert_contains "$ERR" "claude-box setup"
+  assert_contains "$ERR" "claude-ide-box setup"
 }
 
 test_refuses_home_directory() {
@@ -249,19 +249,19 @@ test_env_passed_by_name_only() {
 }
 
 test_token_from_file_never_on_command_line() {
-  mkdir -p "$HOME/.config/claude-box"
-  printf 'sk-ant-oat01-secret\n' >"$HOME/.config/claude-box/token"
-  chmod 600 "$HOME/.config/claude-box/token"
+  mkdir -p "$HOME/.config/claude-ide-box"
+  printf 'sk-ant-oat01-secret\n' >"$HOME/.config/claude-ide-box/token"
+  chmod 600 "$HOME/.config/claude-ide-box/token"
   run_wrapper --version
   assert_contains "$(cat "$FAKE_DOCKER_DIR/exec.env")" "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-secret"
   assert_not_contains "$(cat "$FAKE_DOCKER_DIR/calls")" "sk-ant-oat01-secret"
-  assert_not_contains "$(cat "$HOME/.local/state/claude-box/wrapper.log")" "sk-ant-oat01-secret"
+  assert_not_contains "$(cat "$HOME/.local/state/claude-ide-box/wrapper.log")" "sk-ant-oat01-secret"
 }
 
 test_log_has_args_and_env_names_not_values() {
   CLAUDE_CODE_ENTRYPOINT=value-should-not-be-logged run_wrapper /opt/x/claude --verbose
   local log
-  log="$(cat "$HOME/.local/state/claude-box/wrapper.log")"
+  log="$(cat "$HOME/.local/state/claude-ide-box/wrapper.log")"
   assert_contains "$log" "$PROJECT"
   assert_contains "$log" "--verbose"
   assert_contains "$log" "CLAUDE_CODE_ENTRYPOINT"
@@ -271,7 +271,7 @@ test_log_has_args_and_env_names_not_values() {
 test_xdg_state_home_respected() {
   export XDG_STATE_HOME="$SANDBOX/state"
   run_wrapper --version
-  assert_file_exists "$SANDBOX/state/claude-box/wrapper.log"
+  assert_file_exists "$SANDBOX/state/claude-ide-box/wrapper.log"
 }
 
 test_host_path_flags_outside_project_dropped() {
@@ -312,9 +312,9 @@ test_parallel_starts_create_container_once() {
 }
 
 test_stale_lock_is_removed() {
-  local lockdir="$HOME/.local/state/claude-box/locks"
+  local lockdir="$HOME/.local/state/claude-ide-box/locks"
   local name
-  name="claude-box-my-project-$(sha8 "$PROJECT")"
+  name="claude-ide-box-my-project-$(sha8 "$PROJECT")"
   mkdir -p "$lockdir/$name.lock"
   echo 999999 >"$lockdir/$name.lock/pid"
   run_wrapper --version
@@ -334,8 +334,8 @@ test_works_when_invoked_through_symlink() {
 }
 
 test_unknown_config_key_fails_closed() {
-  mkdir -p "$HOME/.config/claude-box"
-  echo 'MOUNT_HOME=1' >"$HOME/.config/claude-box/config"
+  mkdir -p "$HOME/.config/claude-ide-box"
+  echo 'MOUNT_HOME=1' >"$HOME/.config/claude-ide-box/config"
   run_wrapper --version
   assert_nonzero "$STATUS"
   assert_contains "$ERR" "MOUNT_HOME"
@@ -361,9 +361,9 @@ test_auto_guard_replaces_new_bundled_binary() {
 
 test_auto_guard_can_be_disabled() {
   local ext="$HOME/.vscode/extensions/anthropic.claude-code-9.9.9-linux-x64/resources/native-binary"
-  mkdir -p "$ext" "$HOME/.config/claude-box"
+  mkdir -p "$ext" "$HOME/.config/claude-ide-box"
   : >"$ext/claude"
-  echo 'AUTO_GUARD=0' >"$HOME/.config/claude-box/config"
+  echo 'AUTO_GUARD=0' >"$HOME/.config/claude-ide-box/config"
   run_wrapper --version
   [ ! -L "$ext/claude" ] || fail "guard ran although AUTO_GUARD=0"
 }
@@ -434,11 +434,11 @@ test_masks_are_found_in_node_modules_and_vendor() {
 }
 
 test_moved_masked_file_fails_closed() {
-  mkdir -p "$PROJECT/app/config" "$HOME/.config/claude-box/projects"
+  mkdir -p "$PROJECT/app/config" "$HOME/.config/claude-ide-box/projects"
   echo 'SECRET' >"$PROJECT/app/config/parameters.php"
   local name
-  name="claude-box-my-project-$(sha8 "$PROJECT")"
-  echo 'MASK_PRESETS="prestashop"' >"$HOME/.config/claude-box/projects/$name.conf"
+  name="claude-ide-box-my-project-$(sha8 "$PROJECT")"
+  echo 'MASK_PRESETS="prestashop"' >"$HOME/.config/claude-ide-box/projects/$name.conf"
   run_wrapper --version
   assert_status 0 "$STATUS"
   # Inside the container the parent of a mountpoint can be renamed.
@@ -462,11 +462,11 @@ test_recreate_by_user_accepts_removed_masks() {
 }
 
 test_moved_masked_file_with_decoy_fails_closed() {
-  mkdir -p "$PROJECT/app/config" "$HOME/.config/claude-box/projects"
+  mkdir -p "$PROJECT/app/config" "$HOME/.config/claude-ide-box/projects"
   echo 'SECRET' >"$PROJECT/app/config/parameters.php"
   local name
-  name="claude-box-my-project-$(sha8 "$PROJECT")"
-  echo 'MASK_PRESETS="prestashop"' >"$HOME/.config/claude-box/projects/$name.conf"
+  name="claude-ide-box-my-project-$(sha8 "$PROJECT")"
+  echo 'MASK_PRESETS="prestashop"' >"$HOME/.config/claude-ide-box/projects/$name.conf"
   run_wrapper --version
   assert_status 0 "$STATUS"
   mv "$PROJECT/app/config" "$PROJECT/app/cfg"
@@ -504,18 +504,18 @@ test_tilde_env_value_is_not_passed() {
 }
 
 test_tmp_size_with_mount_options_is_rejected() {
-  mkdir -p "$HOME/.config/claude-box"
-  echo 'TMP_SIZE="1g,exec"' >"$HOME/.config/claude-box/config"
+  mkdir -p "$HOME/.config/claude-ide-box"
+  echo 'TMP_SIZE="1g,exec"' >"$HOME/.config/claude-ide-box/config"
   run_wrapper --version
   assert_nonzero "$STATUS"
   assert_contains "$ERR" "TMP_SIZE"
 }
 
 test_invalid_resource_settings_are_rejected() {
-  mkdir -p "$HOME/.config/claude-box"
+  mkdir -p "$HOME/.config/claude-ide-box"
   local kv
   for kv in 'MEMORY=lots' 'CPUS=two' 'CONTAINER_UID=abc'; do
-    echo "$kv" >"$HOME/.config/claude-box/config"
+    echo "$kv" >"$HOME/.config/claude-ide-box/config"
     run_wrapper --version
     assert_nonzero "$STATUS" "$kv must be rejected"
   done

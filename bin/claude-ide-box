@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# claude-box - manage the containers that claude-box-exec runs Claude Code in.
-# Run `claude-box help` for usage.
+# claude-ide-box - manage the containers that claude-ide-box-exec runs Claude Code in.
+# Run `claude-ide-box help` for usage.
 set -euo pipefail
 
 self="$0"
 n=0
 while [ -L "$self" ]; do
   n=$((n + 1))
-  [ "$n" -le 40 ] || { echo "claude-box: symlink loop at $0" >&2; exit 1; }
+  [ "$n" -le 40 ] || { echo "claude-ide-box: symlink loop at $0" >&2; exit 1; }
   link="$(readlink "$self")"
   case "$link" in
     /*) self="$link" ;;
@@ -16,15 +16,15 @@ while [ -L "$self" ]; do
 done
 CB_BIN_DIR="$(cd -P "$(dirname "$self")" && pwd -P)"
 CB_ROOT="$(dirname "$CB_BIN_DIR")"
-CB_LIB="$CB_ROOT/lib/claude-box"
-CB_WRAPPER="$CB_BIN_DIR/claude-box-exec"
+CB_LIB="$CB_ROOT/lib/claude-ide-box"
+CB_WRAPPER="$CB_BIN_DIR/claude-ide-box-exec"
 if [ ! -f "$CB_LIB/common.sh" ]; then
-  echo "claude-box: cannot find $CB_LIB/common.sh (broken installation)" >&2
+  echo "claude-ide-box: cannot find $CB_LIB/common.sh (broken installation)" >&2
   exit 1
 fi
-# shellcheck source=lib/claude-box/common.sh
+# shellcheck source=lib/claude-ide-box/common.sh
 . "$CB_LIB/common.sh"
-# shellcheck source=lib/claude-box/guard.sh
+# shellcheck source=lib/claude-ide-box/guard.sh
 . "$CB_LIB/guard.sh"
 
 cb_init_paths
@@ -35,9 +35,9 @@ CB_LOG_STDERR=0
 
 usage() {
   cat <<EOF
-claude-box $CB_VERSION - run the Claude Code IDE extension against a sandboxed container
+claude-ide-box $CB_VERSION - run the Claude Code IDE extension against a sandboxed container
 
-Usage: claude-box <command> [options]
+Usage: claude-ide-box <command> [options]
 
 Setup
   setup [--profile NAME]...   build images, create networks, start the egress proxy
@@ -60,7 +60,7 @@ Network
   logs [--all]                wrapper log and requests denied by the proxy
 
 Safety
-  guard [--undo|--status]     point the extension's bundled binary at claude-box-exec
+  guard [--undo|--status]     point the extension's bundled binary at claude-ide-box-exec
   doctor                      check the whole setup; non-zero exit on failure
 
 Wrapper for the IDE:  $CB_WRAPPER
@@ -134,10 +134,10 @@ cb_reload_proxy() {
     # accepts connections again after "Reconfiguring".
     local err
     if ! err="$(cb_docker kill --signal HUP "$CB_PROXY_NAME" 2>&1 >/dev/null)"; then
-      cb_warn "could not reload the proxy ($err); run 'claude-box setup' to restart it"
+      cb_warn "could not reload the proxy ($err); run 'claude-ide-box setup' to restart it"
       return 0
     fi
-    max=$((${CLAUDE_BOX_RELOAD_TIMEOUT:-15} * 5))
+    max=$((${CLAUDE_IDE_BOX_RELOAD_TIMEOUT:-15} * 5))
     while [ "$tries" -lt "$max" ]; do
       if cb_docker logs --since "$since" "$CB_PROXY_NAME" 2>&1 |
         awk '/Reconfiguring Squid Cache/ { r = 1 } r && /Accepting HTTP Socket connections/ { f = 1 } END { exit !f }'; then
@@ -147,14 +147,14 @@ cb_reload_proxy() {
       tries=$((tries + 1))
       sleep 0.2
     done
-    cb_warn "the proxy did not confirm the reload; check 'claude-box logs --all'"
+    cb_warn "the proxy did not confirm the reload; check 'claude-ide-box logs --all'"
   else
-    say "proxy is not running; the change applies at the next 'claude-box setup'"
+    say "proxy is not running; the change applies at the next 'claude-ide-box setup'"
   fi
 }
 
 cmd_allow() {
-  [ $# -eq 1 ] || cb_die "usage: claude-box allow DOMAIN"
+  [ $# -eq 1 ] || cb_die "usage: claude-ide-box allow DOMAIN"
   local d
   d="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   cb_valid_domain "$d" || cb_die "'$1' is not a domain name (use example.com or .example.com; no scheme, port, IP or wildcard)"
@@ -171,15 +171,15 @@ cmd_allow() {
 }
 
 cmd_preset() {
-  [ $# -eq 2 ] || cb_die "usage: claude-box preset NAME on|off"
+  [ $# -eq 2 ] || cb_die "usage: claude-ide-box preset NAME on|off"
   local name="$1" state="$2" list
-  case "$state" in on | off) ;; *) cb_die "usage: claude-box preset NAME on|off" ;; esac
+  case "$state" in on | off) ;; *) cb_die "usage: claude-ide-box preset NAME on|off" ;; esac
   if [ "$name" = "prestashop" ]; then
     project_from_pwd
     cb_load_config
     list="$(cb_toggle_word "$CFG_MASK_PRESETS" "$name" "$state")"
     cb_config_set "$CB_PROJECT_CONFIG" MASK_PRESETS "$list"
-    say "mask preset $name $state for $CB_PROJECT_DIR (applies when the container is next created; 'claude-box up --recreate')"
+    say "mask preset $name $state for $CB_PROJECT_DIR (applies when the container is next created; 'claude-ide-box up --recreate')"
     return 0
   fi
   [ -f "$(cb_preset_file "$name")" ] || cb_die "unknown preset '$name' (proxy: php, github; mask: prestashop)"
@@ -251,7 +251,7 @@ cmd_setup() {
     say "creating network $CB_NETWORK_INTERNAL ($CFG_SUBNET)"
     cb_docker network create --driver bridge --internal --subnet "$CFG_SUBNET" \
       --opt com.docker.network.bridge.inhibit_ipv4=true \
-      --label io.claude-box.managed=1 "$CB_NETWORK_INTERNAL" >/dev/null ||
+      --label io.claude-ide-box.managed=1 "$CB_NETWORK_INTERNAL" >/dev/null ||
       cb_die "cannot create network $CB_NETWORK_INTERNAL (does $CFG_SUBNET collide with another network? set SUBNET and PROXY_IP in $CB_CONFIG_FILE)"
   else
     local info
@@ -263,7 +263,7 @@ cmd_setup() {
   fi
   if ! cb_docker network inspect "$CB_NETWORK_EGRESS" >/dev/null 2>&1; then
     say "creating network $CB_NETWORK_EGRESS"
-    cb_docker network create --driver bridge --label io.claude-box.managed=1 "$CB_NETWORK_EGRESS" >/dev/null ||
+    cb_docker network create --driver bridge --label io.claude-ide-box.managed=1 "$CB_NETWORK_EGRESS" >/dev/null ||
       cb_die "cannot create network $CB_NETWORK_EGRESS"
   fi
 
@@ -272,19 +272,19 @@ cmd_setup() {
   say "starting $CB_PROXY_NAME at $CFG_PROXY_IP"
   cb_docker rm -f "$CB_PROXY_NAME" >/dev/null 2>&1 || true
   cb_docker run -d --name "$CB_PROXY_NAME" \
-    --label io.claude-box.managed=1 \
+    --label io.claude-ide-box.managed=1 \
     --restart unless-stopped \
     --network "$CB_NETWORK_EGRESS" \
     --cap-drop ALL --security-opt no-new-privileges \
     --read-only --tmpfs /run/squid:rw,mode=1777,size=8m --tmpfs /tmp:rw,mode=1777,size=16m \
     --pids-limit 256 --memory 256m \
-    --mount "type=bind,src=$CB_PROXY_STATE_DIR,dst=/etc/claude-box,readonly" \
-    --env "CLAUDE_BOX_SUBNET=$CFG_SUBNET" \
-    --env "CLAUDE_BOX_UPSTREAM=$CFG_UPSTREAM_PROXY" \
+    --mount "type=bind,src=$CB_PROXY_STATE_DIR,dst=/etc/claude-ide-box,readonly" \
+    --env "CLAUDE_IDE_BOX_SUBNET=$CFG_SUBNET" \
+    --env "CLAUDE_IDE_BOX_UPSTREAM=$CFG_UPSTREAM_PROXY" \
     "$CB_PROXY_IMAGE" >/dev/null || cb_die "cannot start $CB_PROXY_NAME"
   cb_docker network connect --ip "$CFG_PROXY_IP" "$CB_NETWORK_INTERNAL" "$CB_PROXY_NAME" >/dev/null ||
     cb_die "cannot attach $CB_PROXY_NAME to $CB_NETWORK_INTERNAL at $CFG_PROXY_IP"
-  say "setup complete. Next: 'claude-box login', 'claude-box guard', then 'claude-box doctor'."
+  say "setup complete. Next: 'claude-ide-box login', 'claude-ide-box guard', then 'claude-ide-box doctor'."
 }
 
 # --------------------------------------------------------------------------
@@ -318,14 +318,14 @@ cmd_login() {
     cb_store_token "$token"
     return 0
   fi
-  [ $# -eq 0 ] || cb_die "usage: claude-box login [--token-stdin]"
+  [ $# -eq 0 ] || cb_die "usage: claude-ide-box login [--token-stdin]"
   if [ ! -t 0 ] || [ ! -t 1 ]; then
-    cb_die "login is interactive; use 'claude-box login --token-stdin' without a terminal"
+    cb_die "login is interactive; use 'claude-ide-box login --token-stdin' without a terminal"
   fi
   cb_load_config
   cb_find_docker
   cb_require_docker
-  cb_docker image inspect "$(cb_image_for_profile base)" >/dev/null 2>&1 || cb_die "run 'claude-box setup' first"
+  cb_docker image inspect "$(cb_image_for_profile base)" >/dev/null 2>&1 || cb_die "run 'claude-ide-box setup' first"
   cb_container_uid
   say "Starting 'claude setup-token' in a temporary container behind the proxy."
   say "Open the URL it prints in your browser, sign in, and paste the code back."
@@ -354,7 +354,7 @@ cmd_up() {
   case "${1:-}" in
     --recreate) recreate=1 ;;
     "") ;;
-    *) cb_die "usage: claude-box up [--recreate]" ;;
+    *) cb_die "usage: claude-ide-box up [--recreate]" ;;
   esac
   project_from_pwd
   cb_load_config
@@ -386,7 +386,7 @@ cmd_rm() {
   case "${1:-}" in
     --volume) volume=1 ;;
     "") ;;
-    *) cb_die "usage: claude-box rm [--volume]" ;;
+    *) cb_die "usage: claude-ide-box rm [--volume]" ;;
   esac
   project_from_pwd
   cb_load_config
@@ -442,12 +442,12 @@ cmd_status() {
   if [ -f "$CB_TOKEN_FILE" ]; then
     say "token:     $CB_TOKEN_FILE"
   else
-    say "token:     none (run 'claude-box login')"
+    say "token:     none (run 'claude-ide-box login')"
   fi
   if [ "$docker_ok" = 1 ]; then
     say ""
-    say "all claude-box containers:"
-    cb_docker ps -a --filter label=io.claude-box.managed=1 --format '  {{.Names}}  {{.Status}}' 2>/dev/null || true
+    say "all claude-ide-box containers:"
+    cb_docker ps -a --filter label=io.claude-ide-box.managed=1 --format '  {{.Names}}  {{.Status}}' 2>/dev/null || true
   fi
 }
 
@@ -489,7 +489,7 @@ cmd_guard() {
 $(cb_bundled_binaries)
 EOF
       ;;
-    *) cb_die "usage: claude-box guard [--undo|--status]" ;;
+    *) cb_die "usage: claude-ide-box guard [--undo|--status]" ;;
   esac
 }
 
@@ -551,10 +551,10 @@ doctor_settings() {
       check_fail "$f: claudeCode.claudeProcessWrapper is not set (add \"claudeCode.claudeProcessWrapper\": \"$CB_WRAPPER\")"
     else
       resolved="$(cb_resolve_path "$wrapper" 2>/dev/null || true)"
-      if [ -n "$resolved" ] && [ -x "$resolved" ] && [ "$(basename "$resolved")" = claude-box-exec ]; then
+      if [ -n "$resolved" ] && [ -x "$resolved" ] && [ "$(basename "$resolved")" = claude-ide-box-exec ]; then
         check_ok "$f: claudeProcessWrapper -> $wrapper"
       else
-        check_fail "$f: claudeProcessWrapper is '$wrapper', which is not an installed claude-box-exec"
+        check_fail "$f: claudeProcessWrapper is '$wrapper', which is not an installed claude-ide-box-exec"
       fi
     fi
     # Nested repositories created inside the container are writable until the
@@ -613,17 +613,17 @@ cmd_doctor() {
         if cb_docker image inspect --format '{{.Id}}' "$image" >/dev/null 2>&1; then
           check_ok "image $image"
         else
-          check_fail "image $image missing (claude-box setup)"
+          check_fail "image $image missing (claude-ide-box setup)"
         fi
       done
       info="$(cb_internal_network_info)"
       case "$info" in
-        "") check_fail "network $CB_NETWORK_INTERNAL missing (claude-box setup)" ;;
+        "") check_fail "network $CB_NETWORK_INTERNAL missing (claude-ide-box setup)" ;;
         "true "*)
           check_ok "network $CB_NETWORK_INTERNAL is internal ($info)"
           case "$info" in
             *inhibit_ipv4:true*) ;;
-            *) check_warn "network $CB_NETWORK_INTERNAL lets containers reach the host via its bridge address; recreate it with 'claude-box setup'" ;;
+            *) check_warn "network $CB_NETWORK_INTERNAL lets containers reach the host via its bridge address; recreate it with 'claude-ide-box setup'" ;;
           esac
           ;;
         *) check_fail "network $CB_NETWORK_INTERNAL is not internal ($info)" ;;
@@ -631,7 +631,7 @@ cmd_doctor() {
       if cb_proxy_running; then
         check_ok "proxy $CB_PROXY_NAME is running"
       else
-        check_fail "proxy $CB_PROXY_NAME is not running (claude-box setup)"
+        check_fail "proxy $CB_PROXY_NAME is not running (claude-ide-box setup)"
       fi
     fi
   fi
@@ -645,7 +645,7 @@ cmd_doctor() {
   elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     check_ok "ANTHROPIC_API_KEY is set (no subscription token)"
   else
-    check_warn "no token (claude-box login) and no ANTHROPIC_API_KEY"
+    check_warn "no token (claude-ide-box login) and no ANTHROPIC_API_KEY"
   fi
 
   while IFS= read -r b; do
@@ -660,15 +660,15 @@ EOF
   if [ "$n" = 0 ]; then
     check_warn "no Claude Code extension found in the known extension directories"
   elif [ -n "$bad" ]; then
-    check_fail "bundled extension binaries not guarded (claude-box guard):$bad"
+    check_fail "bundled extension binaries not guarded (claude-ide-box guard):$bad"
   else
-    check_ok "guard: all $n bundled extension binaries point to claude-box-exec"
+    check_ok "guard: all $n bundled extension binaries point to claude-ide-box-exec"
   fi
 
   host_claude="$(command -v claude 2>/dev/null || true)"
   if [ -n "$host_claude" ]; then
     case "$(cb_resolve_path "$host_claude" 2>/dev/null || true)" in
-      */claude-box-exec) check_ok "claude on PATH is claude-box-exec" ;;
+      */claude-ide-box-exec) check_ok "claude on PATH is claude-ide-box-exec" ;;
       *) check_warn "claude is installed on the host PATH ($host_claude); running it directly bypasses the sandbox" ;;
     esac
   else
@@ -692,7 +692,7 @@ main() {
   [ $# -eq 0 ] || shift
   case "$cmd" in
     help | -h | --help) usage ;;
-    version | --version) say "claude-box $CB_VERSION" ;;
+    version | --version) say "claude-ide-box $CB_VERSION" ;;
     setup) cmd_setup "$@" ;;
     login) cmd_login "$@" ;;
     up) cmd_up "$@" ;;
@@ -705,7 +705,7 @@ main() {
     preset) cmd_preset "$@" ;;
     guard) cmd_guard "$@" ;;
     doctor) cmd_doctor "$@" ;;
-    *) cb_die "unknown command '$cmd' (see 'claude-box help')" ;;
+    *) cb_die "unknown command '$cmd' (see 'claude-ide-box help')" ;;
   esac
 }
 

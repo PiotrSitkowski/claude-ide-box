@@ -1,19 +1,19 @@
 # Security policy
 
-claude-box is a sandbox. A way out of it is the most serious bug it can have, and reports are very
+Claude IDE Box is a sandbox. A way out of it is the most serious bug it can have, and reports are very
 welcome.
 
 ## Reporting a sandbox escape
 
 Please report privately through **GitHub's private vulnerability reporting**:
-[Security → Report a vulnerability](https://github.com/PiotrSitkowski/claude-box/security/advisories/new).
+[Security → Report a vulnerability](https://github.com/PiotrSitkowski/claude-ide-box/security/advisories/new).
 Do not open a public issue for anything in the "in scope" list below.
 
 A useful report contains:
 
 - host OS, Docker flavour and version (`docker version`), IDE and extension version;
-- `claude-box doctor` output;
-- the steps, run from inside the project container (`claude-box shell`) or as a prompt to Claude,
+- `claude-ide-box doctor` output;
+- the steps, run from inside the project container (`claude-ide-box shell`) or as a prompt to Claude,
   that reach something they should not;
 - what you expected and what happened.
 
@@ -27,12 +27,12 @@ do one of these:
 
 | Goal | Examples |
 |---|---|
-| execute code on the host | through the wrapper, the CLI, `guard`, `install.sh`, or anything claude-box itself runs on the host |
+| execute code on the host | through the wrapper, the CLI, `guard`, `install.sh`, or anything Claude IDE Box itself runs on the host |
 | read host data outside the project | home directory, `~/.ssh`, other projects, the token file |
 | read a masked file | `.env`, `.env.*`, configured masks |
 | write a read-only path | `.git`, `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer`, configured entries |
 | reach the network beyond the allowlist | other domains, other ports, bare IPs, DNS, host or LAN services |
-| change the sandbox configuration | anything under `~/.config/claude-box`, the proxy allowlist |
+| change the sandbox configuration | anything under `~/.config/claude-ide-box`, the proxy allowlist |
 | make the wrapper run `claude` on the host | any fail-open path |
 
 ## Out of scope
@@ -42,7 +42,7 @@ do one of these:
   sandbox (see the threat model in the README).
 - Data sent to an allowlisted domain. Allowlisted domains are deliberate exits.
 - Container escapes through kernel or container runtime bugs - report those upstream (Docker,
-  runc, containerd, the kernel). A claude-box configuration that makes such a bug reachable when it
+  runc, containerd, the kernel). A Claude IDE Box configuration that makes such a bug reachable when it
   otherwise would not be *is* in scope.
 - The IDE extension itself.
 
@@ -65,4 +65,4 @@ These are documented trade-offs, not vulnerabilities. Proposals to close them ar
   the IDE auto-detects sub-repositories, hence `"git.autoRepositoryDetection": false` in the
   recommended settings; `doctor` warns without it.
 - **guard depends on the extension layout.** A new extension version is unguarded until the next
-  wrapper start or `claude-box guard`; `doctor` reports it.
+  wrapper start or `claude-ide-box guard`; `doctor` reports it.

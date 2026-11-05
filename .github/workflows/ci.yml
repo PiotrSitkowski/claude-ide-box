@@ -16,8 +16,8 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck --version
-          shellcheck -x bin/claude-box bin/claude-box-exec install.sh \
-            lib/claude-box/*.sh image/create-user.sh proxy/entrypoint.sh \
+          shellcheck -x bin/claude-ide-box bin/claude-ide-box-exec install.sh \
+            lib/claude-ide-box/*.sh image/create-user.sh proxy/entrypoint.sh \
             tests/*.sh tests/unit/*.sh tests/unit/fake-bin/docker tests/integration/*.sh
 
   unit:
@@ -64,6 +64,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Integration tests
         env:
-          CLAUDE_BOX_REQUIRE_DOCKER: "1"
-          CLAUDE_BOX_IT_PROFILES: php
+          CLAUDE_IDE_BOX_REQUIRE_DOCKER: "1"
+          CLAUDE_IDE_BOX_IT_PROFILES: php
         run: bash tests/integration/run.sh

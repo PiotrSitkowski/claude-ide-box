@@ -1,4 +1,4 @@
-<h1 align="center">claude-box</h1>
+<h1 align="center">Claude IDE Box</h1>
 
 <p align="center">
   <b>The Claude Code IDE extension, with Claude Code itself locked in a container.</b><br>
@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/PiotrSitkowski/claude-box/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PiotrSitkowski/claude-box/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/PiotrSitkowski/claude-ide-box/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PiotrSitkowski/claude-ide-box/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0f766e"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/hosts-macOS%20%C2%B7%20Linux%20%C2%B7%20WSL2-4338ca">
   <img alt="Shell" src="https://img.shields.io/badge/bash-3.2%2B-59636e">
@@ -15,7 +15,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
-    <img alt="Architecture: the IDE extension starts claude-box-exec on the host, which runs claude in a project container on an internal Docker network. The only way out is a squid proxy that allows HTTPS to allowlisted domains." src="docs/assets/architecture-light.svg" width="100%">
+    <img alt="Architecture: the IDE extension starts claude-ide-box-exec on the host, which runs claude in a project container on an internal Docker network. The only way out is a squid proxy that allows HTTPS to allowlisted domains." src="docs/assets/architecture-light.svg" width="100%">
   </picture>
 </p>
 
@@ -49,7 +49,7 @@ relying on it.
 ## How it works
 
 The extension has a setting, `claudeCode.claudeProcessWrapper`, that names an executable to launch
-instead of its bundled `claude` binary. claude-box sets it to `claude-box-exec`, which does
+instead of its bundled `claude` binary. claude-ide-box sets it to `claude-ide-box-exec`, which does
 nothing but `docker exec -i` into the project's container and run `claude` there with the same
 arguments. stdin/stdout - the extension's stream-json protocol - is the only channel between the
 host and the container.
@@ -58,7 +58,7 @@ host and the container.
 sequenceDiagram
     autonumber
     participant Ext as Claude Code extension
-    participant W as claude-box-exec (host)
+    participant W as claude-ide-box-exec (host)
     participant D as Docker
     participant C as project container
     participant P as squid proxy
@@ -73,11 +73,11 @@ sequenceDiagram
 
 | Piece | What it does |
 |---|---|
-| `bin/claude-box-exec` | The wrapper the extension runs. Writes nothing to stdout but the container's stdout, logs to `~/.local/state/claude-box/wrapper.log`, never executes anything on the host except `docker`. |
-| `bin/claude-box` | Management CLI: `setup`, `login`, `up`, `down`, `rm`, `shell`, `status`, `logs`, `allow`, `preset`, `guard`, `doctor`. |
+| `bin/claude-ide-box-exec` | The wrapper the extension runs. Writes nothing to stdout but the container's stdout, logs to `~/.local/state/claude-ide-box/wrapper.log`, never executes anything on the host except `docker`. |
+| `bin/claude-ide-box` | Management CLI: `setup`, `login`, `up`, `down`, `rm`, `shell`, `status`, `logs`, `allow`, `preset`, `guard`, `doctor`. |
 | `image/` | Debian bookworm + Node 22 + a pinned Claude Code. Non-root user with your UID/GID, no sudo. Optional language profiles (`php` ships). |
 | `proxy/` | squid as an unprivileged user: CONNECT to port 443 of allowlisted domains only, no cache, every denial logged. |
-| Networks | `claude-box-internal` (`--internal`, no route out, host gets no address on it) and `claude-box-egress` (only the proxy is on it). |
+| Networks | `claude-ide-box-internal` (`--internal`, no route out, host gets no address on it) and `claude-ide-box-egress` (only the proxy is on it). |
 | `guard` | Replaces the binary bundled with every installed extension version by a symlink to the wrapper, so even an extension that ignores the wrapper setting lands in the container. |
 
 The first start creates the read-only directories that do not exist yet (`.git`, `.vscode`,
@@ -85,12 +85,12 @@ The first start creates the read-only directories that do not exist yet (`.git`,
 could create them writable. Git ignores an empty `.git` directory, and `git init` on the host
 fills it normally.
 
-One container and one home volume exist **per project** (`claude-box-<name>-<hash>`), so hooks,
+One container and one home volume exist **per project** (`claude-ide-box-<name>-<hash>`), so hooks,
 settings and history in one project's `~/.claude` never touch another project.
 
 ## Threat model
 
-claude-box assumes that whatever runs inside the container - Claude, a tool it calls, a
+Claude IDE Box assumes that whatever runs inside the container - Claude, a tool it calls, a
 dependency it installs, a prompt-injected instruction - may be hostile, and keeps it away from the
 rest of your machine.
 
@@ -115,14 +115,14 @@ rest of your machine.
 > - **Every allowlisted domain is an exfiltration channel.** `api.anthropic.com` is unavoidable.
 >   The `github` preset in particular lets anything with a token push data out.
 > - **Conversation history lives in the container's volume**, not in your `~/.claude`. Removing it
->   (`claude-box rm --volume`) deletes that history.
+>   (`claude-ide-box rm --volume`) deletes that history.
 > - **A repository Claude creates mid-session is writable until the next start.** Then its `.git`
 >   becomes read-only. Until then, only the IDE setting `"git.autoRepositoryDetection": false`
 >   keeps the host from running git (hooks, `core.fsmonitor`) in it; `doctor` warns without it.
 > - **Containers of different projects share the internal network** and can reach each other's
 >   listening ports. Nothing listens by default; see [SECURITY.md](SECURITY.md#known-limitations).
 > - **The extension is trusted.** It runs on the host and renders what the container sends.
->   claude-box protects the host from the `claude` process, not from the extension.
+>   Claude IDE Box protects the host from the `claude` process, not from the extension.
 > - **Docker is the boundary.** A container escape (kernel or runtime bug) defeats all of this.
 
 ## Install
@@ -131,15 +131,15 @@ Prerequisites on every platform: Docker (Desktop or Engine), `git`, and the Clau
 in your IDE. A Claude subscription (Pro/Max) is the primary path; an API key works too.
 
 ```bash
-git clone https://github.com/PiotrSitkowski/claude-box.git
+git clone https://github.com/PiotrSitkowski/claude-ide-box.git
 ```
 
 ```bash
-cd claude-box && ./install.sh
+cd claude-ide-box && ./install.sh
 ```
 
-`install.sh` copies the scripts to `~/.local/share/claude-box`, links `claude-box` and
-`claude-box-exec` into `~/.local/bin`, needs no root, and is safe to re-run. It prints the exact
+`install.sh` copies the scripts to `~/.local/share/claude-ide-box`, links `claude-ide-box` and
+`claude-ide-box-exec` into `~/.local/bin`, needs no root, and is safe to re-run. It prints the exact
 settings snippet for your machine.
 
 ### macOS
@@ -151,16 +151,16 @@ The reference platform is macOS 15 on Intel with Docker Desktop (see the manual 
    covers usual project locations.
 2. Install and build:
    ```bash
-   ./install.sh && claude-box setup
+   ./install.sh && claude-ide-box setup
    ```
 3. Get a token (opens a URL you visit in your browser):
    ```bash
-   claude-box login
+   claude-ide-box login
    ```
 4. Open **user** settings JSON in each IDE you use - *Antigravity*, *Antigravity IDE*, *VS Code*,
    *Cursor* (`Cmd+Shift+P` → "Preferences: Open User Settings (JSON)") and add:
    ```jsonc
-   "claudeCode.claudeProcessWrapper": "/Users/you/.local/share/claude-box/bin/claude-box-exec",
+   "claudeCode.claudeProcessWrapper": "/Users/you/.local/share/claude-ide-box/bin/claude-ide-box-exec",
    "claudeCode.useTerminal": false,
    "git.autoRepositoryDetection": false
    ```
@@ -168,7 +168,7 @@ The reference platform is macOS 15 on Intel with Docker Desktop (see the manual 
    the project - git hooks and `core.fsmonitor` from such a repository would run on the host.
 5. Route every installed extension version to the wrapper and check everything:
    ```bash
-   claude-box guard && claude-box doctor
+   claude-ide-box guard && claude-ide-box doctor
    ```
 
 > [!IMPORTANT]
@@ -197,7 +197,7 @@ places (`/usr/local/bin`, `/opt/homebrew/bin`, `~/.docker/bin`, Docker.app) and 
    runs on the WSL side (`~/.vscode-server/extensions/...`), which is what `guard` patches.
 4. Put the wrapper setting in the Windows **user** settings
    (`%APPDATA%\Code\User\settings.json`) and, if your IDE applies machine settings remotely, in
-   `~/.vscode-server/data/Machine/settings.json`. `claude-box doctor` checks both.
+   `~/.vscode-server/data/Machine/settings.json`. `claude-ide-box doctor` checks both.
 
 ## Daily use
 
@@ -206,18 +206,18 @@ creates its container (a few seconds); later sessions reuse it.
 
 | Command | |
 |---|---|
-| `claude-box status` | proxy, network, this project's container, token |
-| `claude-box shell` | bash in this project's container, e.g. to run `claude` in a terminal |
-| `claude-box logs` | wrapper log and requests the proxy denied (`--all` for the full proxy log) |
-| `claude-box allow example.org` | allow a domain (`.example.org` for subdomains too) |
-| `claude-box up --recreate` | apply changed masks or settings now |
-| `claude-box down` / `rm` | stop / remove this project's container (`rm --volume` also deletes history) |
-| `claude-box doctor` | check the whole setup; non-zero exit on any failure |
+| `claude-ide-box status` | proxy, network, this project's container, token |
+| `claude-ide-box shell` | bash in this project's container, e.g. to run `claude` in a terminal |
+| `claude-ide-box logs` | wrapper log and requests the proxy denied (`--all` for the full proxy log) |
+| `claude-ide-box allow example.org` | allow a domain (`.example.org` for subdomains too) |
+| `claude-ide-box up --recreate` | apply changed masks or settings now |
+| `claude-ide-box down` / `rm` | stop / remove this project's container (`rm --volume` also deletes history) |
+| `claude-ide-box doctor` | check the whole setup; non-zero exit on any failure |
 
 > [!NOTE]
 > When a new secret file (say `.env.local`) appears on the host, the next session recreates the
 > container so the file is masked. If a session is still running in the old container, the wrapper
-> refuses to start a new one and tells you to run `claude-box up --recreate`.
+> refuses to start a new one and tells you to run `claude-ide-box up --recreate`.
 
 ## Network allowlist
 
@@ -238,7 +238,7 @@ Presets, off by default:
 | `github` | `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com` | **exfiltration channel** - composer often needs it for dist downloads |
 
 ```bash
-claude-box preset php on
+claude-ide-box preset php on
 ```
 
 By default the container also sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` (no telemetry or
@@ -247,9 +247,9 @@ drive are not exposed inside the sandbox). Both can be turned off in the config.
 
 ## Configuration
 
-`~/.config/claude-box/config` (outside every project, so Claude cannot edit it) holds `KEY=value`
+`~/.config/claude-ide-box/config` (outside every project, so Claude cannot edit it) holds `KEY=value`
 lines; it is parsed, never sourced, and unknown keys are an error. Per-project overrides go to
-`~/.config/claude-box/projects/<container-name>.conf`.
+`~/.config/claude-ide-box/projects/<container-name>.conf`.
 
 | Key | Default | |
 |---|---|---|
@@ -267,12 +267,12 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `UPSTREAM_PROXY` | | `host:port` of a corporate proxy squid should forward to |
 | `AUTO_GUARD` | `1` | re-run `guard` on every wrapper start |
 
-\* can be overridden per project. The full list is in [`lib/claude-box/common.sh`](lib/claude-box/common.sh)
+\* can be overridden per project. The full list is in [`lib/claude-ide-box/common.sh`](lib/claude-ide-box/common.sh)
 (`cb_config_defaults`).
 
 ### Language profiles
 
-`claude-box setup --profile php` builds `claude-box/php` on top of the base image: PHP 8.3 CLI
+`claude-ide-box setup --profile php` builds `claude-ide-box/php` on top of the base image: PHP 8.3 CLI
 with intl, zip, gd, mysqli, pdo_mysql, mbstring, xml and curl, composer, and the MariaDB client -
 enough for PrestaShop. Select it per project with `PROFILE=php`. To add a profile, create
 `image/profiles/<name>/Dockerfile` that starts `FROM ${BASE_IMAGE}`, installs as root and ends with
@@ -281,7 +281,7 @@ enough for PrestaShop. Select it per project with `PROFILE=php`. To add a profil
 ## Updating Claude Code
 
 ```bash
-claude-box setup
+claude-ide-box setup
 ```
 
 after changing `CLAUDE_CODE_VERSION` in the config rebuilds the images. Running containers keep the
@@ -292,19 +292,19 @@ auto-updater is disabled inside the container on purpose - versions change only 
 
 | Symptom | Cause and fix |
 |---|---|
-| Panel says the process exited immediately | `claude-box logs` - the wrapper log has the reason. Most often Docker is not running. |
-| `image claude-box/base:latest not found` | run `claude-box setup` |
+| Panel says the process exited immediately | `claude-ide-box logs` - the wrapper log has the reason. Most often Docker is not running. |
+| `image claude-ide-box/base:latest not found` | run `claude-ide-box setup` |
 | `refusing to mount ...: it is the home directory` | the IDE has no folder open, or you opened `~`. Open a project folder. |
-| `container ... runs with an outdated configuration` | a session is still running in the old container; close it and run `claude-box up --recreate` |
-| A domain Claude needs is blocked | `claude-box logs` shows `TCP_DENIED` lines; `claude-box allow <domain>` if you accept the risk |
+| `container ... runs with an outdated configuration` | a session is still running in the old container; close it and run `claude-ide-box up --recreate` |
+| A domain Claude needs is blocked | `claude-ide-box logs` shows `TCP_DENIED` lines; `claude-ide-box allow <domain>` if you accept the risk |
 | `network ... cannot be created` | `SUBNET` collides with an existing network; change `SUBNET` and `PROXY_IP` |
-| Extension works but `doctor` reports unguarded binaries | the extension updated; run `claude-box guard` (the wrapper also does it on start) |
+| Extension works but `doctor` reports unguarded binaries | the extension updated; run `claude-ide-box guard` (the wrapper also does it on start) |
 | `useTerminal is true` in `doctor` | terminal mode ignores the wrapper - set `"claudeCode.useTerminal": false` |
-| `masked path(s) were moved, replaced or deleted` | a masked file is not the same file (inode) it was when the container was created. Editors that save by writing a temp file and renaming it cause this too. If it was you, `claude-box up --recreate`; if not, find out what moved it first |
+| `masked path(s) were moved, replaced or deleted` | a masked file is not the same file (inode) it was when the container was created. Editors that save by writing a temp file and renaming it cause this too. If it was you, `claude-ide-box up --recreate`; if not, find out what moved it first |
 | `... cannot be mounted safely` | a file or directory that has to be masked or made read-only has a comma, quote, tab or newline in its name; rename it |
-| Files created by Claude are owned by another user | the images were built for another UID; run `claude-box setup` as yourself. On Docker Desktop ownership is mapped to you regardless. |
+| Files created by Claude are owned by another user | the images were built for another UID; run `claude-ide-box setup` as yourself. On Docker Desktop ownership is mapped to you regardless. |
 
-Set `CLAUDE_BOX_DEBUG=1` to mirror the wrapper log on stderr.
+Set `CLAUDE_IDE_BOX_DEBUG=1` to mirror the wrapper log on stderr.
 
 ## Uninstall
 
@@ -330,6 +330,12 @@ tests/run-unit.sh
 ```bash
 tests/integration/run.sh
 ```
+
+## Trademarks
+
+Claude IDE Box is an independent open-source project. It is not affiliated with, endorsed by or
+sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC; they are used here
+only to describe what this tool works with.
 
 ## License
 
