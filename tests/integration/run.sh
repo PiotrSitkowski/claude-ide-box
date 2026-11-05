@@ -324,6 +324,11 @@ case "$logs" in
   *TCP_DENIED*example.com*) ok "claude-ide-box logs shows the denied request" ;;
   *) not_ok "claude-ide-box logs shows the denied request" "$logs" ;;
 esac
+v="$(printf '%s\n' "$logs" | sed -n '/denied domains/,$p' | grep ' example.com ' || true)"
+case "$v" in
+  *"claude-ide-box allow example.com"*) ok "claude-ide-box logs summarises the denied domain with a hint" ;;
+  *) not_ok "claude-ide-box logs summarises the denied domain with a hint" "$logs" ;;
+esac
 
 echo "== extra: allowlist changes apply without restarting the proxy"
 before="$(in_box "curl -s -o /dev/null -w '%{http_code}' --max-time 20 https://packagist.org/" 2>&1 || true)"

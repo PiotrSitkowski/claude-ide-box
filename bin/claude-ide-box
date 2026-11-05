@@ -512,10 +512,111 @@ cmd_status() {
   fi
 }
 
+# Colours only for a person at a terminal (and never with NO_COLOR set).
+cb_colors() {
+  C_BOLD="" C_WARN="" C_OFF=""
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
+    C_BOLD="$(printf '\033[1m')"
+    C_WARN="$(printf '\033[33m')"
+    C_OFF="$(printf '\033[0m')"
+  fi
+}
+
+# cb_domain_matches HOST ENTRY - squid dstdomain semantics: ".example.com"
+# matches example.com and its subdomains, "example.com" only itself.
+cb_domain_matches() {
+  case "$2" in
+    .*) [ "$1" = "${2#.}" ] || case "$1" in *"$2") return 0 ;; *) return 1 ;; esac ;;
+    *) [ "$1" = "$2" ] ;;
+  esac
+}
+
+# cb_domain_in_files HOST FILE... - true when an entry of the files matches.
+cb_domain_in_files() {
+  local host="$1" d
+  shift
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    if cb_domain_matches "$host" "$(printf '%s' "$d" | tr '[:upper:]' '[:lower:]')"; then
+      return 0
+    fi
+  done <<EOF
+$(cb_domains_of "$@")
+EOF
+  return 1
+}
+
+# cb_preset_for_domain HOST - name of the first proxy preset (the user's own
+# first) that would allow HOST, or nothing.
+cb_preset_for_domain() {
+  local f name
+  for f in "$CB_CONFIG_DIR"/presets/*.txt "$CB_ROOT"/proxy/presets/*.txt; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f" .txt)"
+    case "$f" in
+      "$CB_CONFIG_DIR"/*) ;;
+      *) [ ! -f "$CB_CONFIG_DIR/presets/$name.txt" ] || continue ;;
+    esac
+    if cb_domain_in_files "$1" "$f"; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  done
+}
+
+# Read squid access log lines on stdin; print "COUNT HOST PORT KIND" for the
+# denied ones, most frequent first. KIND is connect or http (plain HTTP).
+cb_denied_summary() {
+  awk '
+    $4 ~ /TCP_DENIED|\/403$/ {
+      method = $6; url = $7; kind = "connect"; port = ""
+      if (method == "CONNECT") {
+        host = url
+        n = split(url, hp, ":")
+        if (n > 1) { port = hp[n]; host = substr(url, 1, length(url) - length(port) - 1) }
+      } else {
+        kind = "http"
+        sub(/^[a-zA-Z]+:\/\//, "", url)
+        sub(/\/.*/, "", url)
+        host = url; port = "80"
+        if (match(url, /:[0-9]+$/)) { port = substr(url, RSTART + 1); host = substr(url, 1, RSTART - 1) }
+      }
+      host = tolower(host)
+      gsub(/^\[|\]$/, "", host)
+      if (host == "") next
+      key = host " " (port == "" ? "-" : port) " " kind
+      if (!(key in c)) order[++k] = key
+      c[key]++
+    }
+    END { for (i = 1; i <= k; i++) print c[order[i]], order[i] }
+  ' | sort -k1,1nr -k2,2 -s
+}
+
+# Print the hint for one denied HOST PORT KIND.
+cb_denied_hint() {
+  local host="$1" port="$2" kind="$3" preset
+  if [ "$kind" = http ]; then
+    printf 'plain HTTP is never allowed; only HTTPS (CONNECT to port 443) passes the proxy'
+  elif printf '%s\n' "$host" | grep -Eq '^[0-9.]+$|:'; then
+    printf 'an IP address is never allowed; the proxy only allows domain names'
+  elif [ "$port" != 443 ]; then
+    printf 'port %s is never allowed; the proxy only allows port 443' "$port"
+  elif ! cb_valid_domain "$host"; then
+    printf 'not a domain name the allowlist can hold'
+  elif [ -f "$CB_PROXY_STATE_DIR/allowlist" ] && cb_domain_in_files "$host" "$CB_PROXY_STATE_DIR/allowlist"; then
+    printf 'allowed now (denied before the allowlist changed)'
+  elif preset="$(cb_preset_for_domain "$host")" && [ -n "$preset" ]; then
+    printf '%sclaude-ide-box preset %s on%s' "$C_BOLD" "$preset" "$C_OFF"
+  else
+    printf '%sclaude-ide-box allow %s%s' "$C_BOLD" "$host" "$C_OFF"
+  fi
+}
+
 cmd_logs() {
   local all=0
   [ "${1:-}" != "--all" ] || all=1
-  say "== wrapper log: $CB_LOG_FILE"
+  cb_colors
+  say "${C_BOLD}== wrapper log: $CB_LOG_FILE${C_OFF}"
   if [ -f "$CB_LOG_FILE" ]; then
     tail -n 60 "$CB_LOG_FILE"
   else
@@ -528,12 +629,35 @@ cmd_logs() {
     return 0
   fi
   if [ "$all" = 1 ]; then
-    say "== proxy log ($CB_PROXY_NAME)"
+    say "${C_BOLD}== proxy log ($CB_PROXY_NAME)${C_OFF}"
     cb_docker logs --tail 200 "$CB_PROXY_NAME" 2>&1 || true
-  else
-    say "== requests denied by the proxy ($CB_PROXY_NAME)"
-    cb_docker logs --tail 2000 "$CB_PROXY_NAME" 2>/dev/null | grep -E 'TCP_DENIED|/403 ' | tail -n 50 || true
+    return 0
   fi
+  local log summary count host port kind width=0
+  log="$(cb_docker logs --tail 2000 "$CB_PROXY_NAME" 2>/dev/null || true)"
+  say "${C_BOLD}== requests denied by the proxy ($CB_PROXY_NAME)${C_OFF}"
+  printf '%s\n' "$log" | grep -E 'TCP_DENIED|/403 ' | tail -n 50 || true
+  summary="$(printf '%s\n' "$log" | cb_denied_summary)"
+  say ""
+  say "${C_BOLD}== denied domains, most frequent first (last 2000 proxy log lines)${C_OFF}"
+  if [ -z "$summary" ]; then
+    say "no denied requests"
+    return 0
+  fi
+  while read -r count host port kind; do
+    [ "${#host}" -le "$width" ] || width="${#host}"
+  done <<EOF
+$summary
+EOF
+  [ "$width" -le 40 ] || width=40
+  while read -r count host port kind; do
+    [ -n "$host" ] || continue
+    printf '%6s  %-*s  %s\n' "$count" "$width" "$host" "$(cb_denied_hint "$host" "$port" "$kind")"
+  done <<EOF
+$summary
+EOF
+  say ""
+  say "${C_WARN}Every allowed domain is a way for data to leave the box; allow only what the project needs.${C_OFF}"
 }
 
 cmd_guard() {

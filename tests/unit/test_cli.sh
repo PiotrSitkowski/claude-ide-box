@@ -581,3 +581,95 @@ test_forward_relays_a_connection_through_docker_exec() {
 test_forward_listens_on_loopback_only() {
   assert_contains "$(cat "$REPO_DIR/bin/claude-ide-box")" 'LocalAddr => "127.0.0.1"'
 }
+
+# --- logs: summary of denied domains -------------------------------------------
+
+proxy_log() {
+  cat >"$FAKE_DOCKER_DIR/proxy.log"
+}
+
+denied_log_fixture() {
+  proxy_log <<'LOG'
+1700000000.000 0 172.30.99.5 TCP_TUNNEL/200 5000 CONNECT api.anthropic.com:443 - HIER_DIRECT/1.2.3.4 -
+1700000001.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT files.pythonhosted.org:443 - HIER_NONE/- text/html
+1700000002.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT example.com:443 - HIER_NONE/- text/html
+1700000003.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT Example.COM:443 - HIER_NONE/- text/html
+1700000004.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT files.pythonhosted.org:443 - HIER_NONE/- text/html
+1700000005.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT example.com:443 - HIER_NONE/- text/html
+1700000006.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT 1.1.1.1:443 - HIER_NONE/- text/html
+1700000007.000 0 172.30.99.5 TCP_DENIED/403 3900 GET http://plain.example.org/x - HIER_NONE/- text/html
+1700000008.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT ssh.example.net:22 - HIER_NONE/- text/html
+LOG
+}
+
+test_logs_summarise_denied_domains_most_frequent_first() {
+  denied_log_fixture
+  run_cli logs
+  assert_status 0 "$STATUS"
+  # raw lines are still there
+  assert_contains "$OUT" "TCP_DENIED/403 3900 CONNECT 1.1.1.1:443"
+  local summary
+  summary="$(printf '%s\n' "$OUT" | sed -n '/denied domains/,$p')"
+  assert_contains "$summary" "denied domains"
+  # counts, most frequent first; host names compared case-insensitively
+  local first second
+  first="$(printf '%s\n' "$summary" | grep -E '^ +[0-9]+ ' | head -n 1)"
+  second="$(printf '%s\n' "$summary" | grep -E '^ +[0-9]+ ' | sed -n 2p)"
+  assert_contains "$first" "3"
+  assert_contains "$first" "example.com"
+  assert_contains "$first" "claude-ide-box allow example.com"
+  assert_contains "$second" "2"
+  assert_contains "$second" "files.pythonhosted.org"
+  assert_contains "$second" "claude-ide-box preset python on"
+  assert_not_contains "$second" "allow files.pythonhosted.org"
+  assert_not_contains "$summary" "api.anthropic.com"
+}
+
+test_logs_explain_requests_that_no_allow_can_fix() {
+  denied_log_fixture
+  run_cli logs
+  local summary line
+  summary="$(printf '%s\n' "$OUT" | sed -n '/denied domains/,$p')"
+  line="$(printf '%s\n' "$summary" | grep '1\.1\.1\.1' || true)"
+  assert_contains "$line" "IP address"
+  assert_not_contains "$line" "claude-ide-box allow"
+  line="$(printf '%s\n' "$summary" | grep 'plain.example.org' || true)"
+  assert_contains "$line" "HTTPS"
+  assert_not_contains "$line" "claude-ide-box allow"
+  line="$(printf '%s\n' "$summary" | grep 'ssh.example.net' || true)"
+  assert_contains "$line" "443"
+  assert_not_contains "$line" "claude-ide-box allow"
+}
+
+test_logs_summary_uses_user_presets_and_marks_allowed_domains() {
+  mkdir -p "$HOME/.config/claude-ide-box/presets"
+  printf '# corporate mirrors\n.corp.example\n' >"$HOME/.config/claude-ide-box/presets/corp.txt"
+  proxy_log <<'LOG'
+1700000001.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT pkg.corp.example:443 - HIER_NONE/- text/html
+1700000002.000 0 172.30.99.5 TCP_DENIED/403 3900 CONNECT packagist.org:443 - HIER_NONE/- text/html
+LOG
+  run_cli allow packagist.org
+  run_cli logs
+  assert_status 0 "$STATUS"
+  local summary
+  summary="$(printf '%s\n' "$OUT" | sed -n '/denied domains/,$p')"
+  assert_contains "$(printf '%s\n' "$summary" | grep pkg.corp.example)" "claude-ide-box preset corp on"
+  assert_contains "$(printf '%s\n' "$summary" | grep packagist.org)" "allowed now"
+}
+
+test_logs_without_denials_say_so() {
+  proxy_log <<'LOG'
+1700000000.000 0 172.30.99.5 TCP_TUNNEL/200 5000 CONNECT api.anthropic.com:443 - HIER_DIRECT/1.2.3.4 -
+LOG
+  run_cli logs
+  assert_status 0 "$STATUS"
+  assert_contains "$OUT" "no denied requests"
+}
+
+test_logs_have_no_colour_codes_when_not_a_terminal() {
+  denied_log_fixture
+  run_cli logs
+  local esc
+  esc="$(printf '\033')"
+  assert_not_contains "$OUT" "$esc"
+}
