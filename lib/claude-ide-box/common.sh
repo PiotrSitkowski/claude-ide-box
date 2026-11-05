@@ -575,7 +575,7 @@ cb_toggle_word() {
 CB_HELD_LOCK=""
 
 cb_lock() {
-  local lock="$CB_LOCK_DIR/$1.lock" tries=0 pid
+  local lock="$CB_LOCK_DIR/$1.lock" tries=0 pid empty=0 seen="" inode
   mkdir -p "$CB_LOCK_DIR"
   while ! mkdir "$lock" 2>/dev/null; do
     pid="$(cat "$lock/pid" 2>/dev/null || true)"
@@ -591,11 +591,28 @@ cb_lock() {
       fi
       continue
     fi
-    if [ -z "$pid" ] && [ "$tries" -gt 25 ]; then
-      # Holder died between mkdir and writing its PID.
-      cb_log "removing lock $lock without a pid file"
-      rm -rf "$lock"
-      continue
+    if [ -z "$pid" ]; then
+      # Every new holder has no pid file for an instant after its mkdir. Only
+      # the same lock directory (same inode) seen without a pid on more than
+      # 25 polls in a row means its holder died before writing one.
+      inode="$(cb_inode "$lock")"
+      if [ -n "$inode" ] && [ "$inode" = "$seen" ]; then
+        empty=$((empty + 1))
+      else
+        empty=1
+        seen="$inode"
+      fi
+      if [ "$empty" -gt 25 ] && mkdir "$lock.reap" 2>/dev/null; then
+        if [ -z "$(cat "$lock/pid" 2>/dev/null || true)" ] && [ "$(cb_inode "$lock")" = "$seen" ]; then
+          cb_log "removing lock $lock without a pid file"
+          rm -rf "$lock"
+        fi
+        rmdir "$lock.reap" 2>/dev/null || true
+        empty=0
+        continue
+      fi
+    else
+      empty=0
     fi
     tries=$((tries + 1))
     if [ "$tries" -gt 900 ]; then

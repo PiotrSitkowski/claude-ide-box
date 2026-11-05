@@ -34,8 +34,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 121 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 121 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image) |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 123 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 123 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image) |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 121 passed, 0 failed in each (run 18, commit `f082f17`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same

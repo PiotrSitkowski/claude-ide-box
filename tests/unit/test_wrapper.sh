@@ -542,3 +542,47 @@ test_mask_record_message_is_readable() {
   assert_nonzero "$STATUS"
   assert_not_contains "$ERR" "from inside the container to escape a mask from inside"
 }
+
+test_live_lock_is_not_broken_while_its_pid_file_flickers() {
+  # A live holder whose pid file is briefly missing (the instant between
+  # mkdir and writing the pid, as for every new holder) must not be taken
+  # for a dead one, however long the waiter has already been waiting.
+  local lockdir="$HOME/.local/state/claude-ide-box/locks"
+  local name lock
+  name="claude-ide-box-my-project-$(sha8 "$PROJECT")"
+  lock="$lockdir/$name.lock"
+  mkdir -p "$lock"
+  (
+    # The cycle is not a multiple of the waiter's 0.2 s poll, so the waiter
+    # sees the pid file missing every few polls.
+    end=$(( $(date +%s) + 9 ))
+    while [ "$(date +%s)" -lt "$end" ]; do
+      echo "$$" >"$lock/pid"
+      sleep 0.11
+      rm -f "$lock/pid"
+      sleep 0.06
+    done
+    echo "RELEASED" >>"$FAKE_DOCKER_DIR/calls"
+    rm -rf "$lock"
+  ) &
+  local holder=$!
+  sleep 0.2
+  run_wrapper --version
+  wait "$holder"
+  assert_status 0 "$STATUS"
+  local order
+  order="$(grep -n -E '^(RELEASED|run )' "$FAKE_DOCKER_DIR/calls" | cut -d: -f2 | awk '{print $1}' | tr '\n' ' ')"
+  assert_eq "RELEASED run " "$order" "the container was created while another process held the lock"
+  assert_not_contains "$(cat "$HOME/.local/state/claude-ide-box/wrapper.log")" "without a pid file"
+}
+
+test_abandoned_lock_without_pid_is_reaped() {
+  # A holder that died between mkdir and writing its pid leaves an empty
+  # lock directory; the next start must not wait for it forever.
+  local name
+  name="claude-ide-box-my-project-$(sha8 "$PROJECT")"
+  mkdir -p "$HOME/.local/state/claude-ide-box/locks/$name.lock"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_contains "$(cat "$HOME/.local/state/claude-ide-box/wrapper.log")" "without a pid file"
+}
