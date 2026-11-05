@@ -181,8 +181,8 @@ test_setup_passes_uid_gid_and_version() {
   run_cli setup
   local c
   c="$(calls)"
-  assert_contains "$c" "USER_UID="
-  assert_contains "$c" "USER_GID="
+  assert_contains "$c" "USER_UID=$(id -u | sed 's/^0$/1000/') "
+  assert_contains "$c" "USER_GID=$(id -g | sed 's/^0$/1000/') "
   assert_contains "$c" "CLAUDE_CODE_VERSION=2.1.318"
 }
 

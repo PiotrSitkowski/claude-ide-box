@@ -31,4 +31,5 @@ http_access deny !ssl_port
 http_access allow CONNECT allowed_domains
 http_access deny all
 
+# Must stay the last line: entrypoint.sh appends the parent proxy here.
 @UPSTREAM@

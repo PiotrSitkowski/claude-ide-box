@@ -124,7 +124,11 @@ if ! (cd "$PROJECT" && "$CLI" up) >"$WORK/up.log" 2>&1; then
   exit 1
 fi
 ok "claude-box up creates the project container"
-NAME="$(cd "$PROJECT" && "$CLI" status | awk '/^container:/{print $2}')"
+# The container name of a project, as claude-box computes it.
+container_name() {
+  (cd "$1" && "$CLI" status | awk '/^container:/{print $2}')
+}
+NAME="$(container_name "$PROJECT")"
 
 # in_box CMD - run a shell command in the project container (as its user).
 in_box() {
@@ -321,7 +325,7 @@ esac
 echo "== extra: per-project home volumes"
 in_box 'echo "project-a" > ~/.claude/marker' || true
 (cd "$PROJECT_B" && "$CLI" up >/dev/null 2>&1) || not_ok "second project container starts"
-NAME_B="cbit-second-$(printf '%s' "$PROJECT_B" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-8)"
+NAME_B="$(container_name "$PROJECT_B")"
 if docker exec "$NAME_B" test -e /home/claude/.claude/marker 2>/dev/null; then
   not_ok "one project's ~/.claude is invisible to another"
 else
@@ -378,7 +382,7 @@ if printf ' %s ' "${CLAUDE_BOX_IT_PROFILES:-}" | grep -q ' php '; then
   PHP_PROJECT="$WORK/php-project"
   mkdir -p "$PHP_PROJECT"
   mkdir -p "$XDG_CONFIG_HOME/claude-box/projects"
-  php_name="cbit-php-project-$(printf '%s' "$PHP_PROJECT" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-8)"
+  php_name="$(container_name "$PHP_PROJECT")"
   echo 'PROFILE=php' >"$XDG_CONFIG_HOME/claude-box/projects/$php_name.conf"
   if (cd "$PHP_PROJECT" && "$CLI" up) >"$WORK/php-up.log" 2>&1; then
     ok "php profile container starts"

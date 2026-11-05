@@ -125,7 +125,7 @@ cb_render_allowlist() {
 }
 
 cb_reload_proxy() {
-  if cb_docker_ready && [ "$(cb_docker inspect --format '{{.State.Running}}' "$CB_PROXY_NAME" 2>/dev/null || true)" = "true" ]; then
+  if cb_docker_ready && cb_proxy_running; then
     local since tries=0 max
     since="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     if ! cb_docker exec "$CB_PROXY_NAME" squid -k reconfigure -f /run/squid/squid.conf >/dev/null 2>&1; then
@@ -168,28 +168,19 @@ cmd_allow() {
 
 cmd_preset() {
   [ $# -eq 2 ] || cb_die "usage: claude-box preset NAME on|off"
-  local name="$1" state="$2" list="" p
+  local name="$1" state="$2" list
   case "$state" in on | off) ;; *) cb_die "usage: claude-box preset NAME on|off" ;; esac
   if [ "$name" = "prestashop" ]; then
     project_from_pwd
     cb_load_config
-    for p in $CFG_MASK_PRESETS; do
-      [ "$p" = "$name" ] || list="$list $p"
-    done
-    [ "$state" = off ] || list="$list $name"
-    list="${list# }"
-    mkdir -p "$CB_PROJECTS_DIR"
+    list="$(cb_toggle_word "$CFG_MASK_PRESETS" "$name" "$state")"
     cb_config_set "$CB_PROJECT_CONFIG" MASK_PRESETS "$list"
     say "mask preset $name $state for $CB_PROJECT_DIR (applies when the container is next created; 'claude-box up --recreate')"
     return 0
   fi
   [ -f "$(cb_preset_file "$name")" ] || cb_die "unknown preset '$name' (proxy: php, github; mask: prestashop)"
   cb_load_config
-  for p in $CFG_PROXY_PRESETS; do
-    [ "$p" = "$name" ] || list="$list $p"
-  done
-  [ "$state" = off ] || list="$list $name"
-  list="${list# }"
+  list="$(cb_toggle_word "$CFG_PROXY_PRESETS" "$name" "$state")"
   cb_config_set "$CB_CONFIG_FILE" PROXY_PRESETS "$list"
   CFG_PROXY_PRESETS="$list"
   cb_render_allowlist
@@ -218,7 +209,7 @@ cb_build() {
 }
 
 cmd_setup() {
-  local profiles="" p uidgid
+  local profiles="" p
   while [ $# -gt 0 ]; do
     case "$1" in
       --profile) [ $# -ge 2 ] || cb_die "--profile needs a name"; profiles="$profiles $2"; shift 2 ;;
@@ -231,15 +222,15 @@ cmd_setup() {
   cb_require_docker
   profiles="$profiles $CFG_BUILD_PROFILES"
 
-  uidgid="$(cb_container_uid)"
+  cb_container_uid
   if [ "$(id -u)" = "0" ] && [ -z "$CFG_CONTAINER_UID" ]; then
     cb_warn "running as root: the container user gets UID 1000 instead (set CONTAINER_UID/CONTAINER_GID to choose)"
   fi
   cb_build "$(cb_image_for_profile base)" "$CB_ROOT/image" \
     --build-arg "BASE_IMAGE=$CFG_BASE_IMAGE" \
     --build-arg "CLAUDE_CODE_VERSION=$CFG_CLAUDE_CODE_VERSION" \
-    --build-arg "USER_UID=${uidgid% *}" \
-    --build-arg "USER_GID=${uidgid#* }"
+    --build-arg "USER_UID=$CB_UID" \
+    --build-arg "USER_GID=$CB_GID"
   for p in $profiles; do
     [ "$p" != base ] || continue
     case "$p" in *[!a-z0-9_-]*) cb_die "invalid profile name '$p'" ;; esac
@@ -260,7 +251,7 @@ cmd_setup() {
       cb_die "cannot create network $CB_NETWORK_INTERNAL (does $CFG_SUBNET collide with another network? set SUBNET and PROXY_IP in $CB_CONFIG_FILE)"
   else
     local info
-    info="$(cb_docker network inspect --format '{{.Internal}} {{.Options}} {{range .IPAM.Config}}{{.Subnet}}{{end}}' "$CB_NETWORK_INTERNAL" 2>/dev/null || true)"
+    info="$(cb_internal_network_info)"
     case "$info" in
       "true "*"$CFG_SUBNET") ;;
       *) cb_warn "network $CB_NETWORK_INTERNAL exists but does not match the configuration ($info); remove it with 'docker network rm $CB_NETWORK_INTERNAL' after removing the containers using it, then run setup again" ;;
@@ -331,16 +322,15 @@ cmd_login() {
   cb_find_docker
   cb_require_docker
   cb_docker image inspect "$(cb_image_for_profile base)" >/dev/null 2>&1 || cb_die "run 'claude-box setup' first"
-  local uidgid
-  uidgid="$(cb_container_uid)"
+  cb_container_uid
   say "Starting 'claude setup-token' in a temporary container behind the proxy."
   say "Open the URL it prints in your browser, sign in, and paste the code back."
   say ""
   cb_docker run -it --rm \
     --network "$CB_NETWORK_INTERNAL" --dns 127.0.0.1 \
     --cap-drop ALL --security-opt no-new-privileges --read-only \
-    --tmpfs /tmp:rw,size=64m --tmpfs "/home/claude:rw,size=64m,uid=${uidgid% *},gid=${uidgid#* }" \
-    --user "${uidgid% *}:${uidgid#* }" \
+    --tmpfs /tmp:rw,size=64m --tmpfs "/home/claude:rw,size=64m,uid=$CB_UID,gid=$CB_GID" \
+    --user "$CB_UID:$CB_GID" \
     --env "HTTPS_PROXY=http://$CFG_PROXY_IP:3128" --env "https_proxy=http://$CFG_PROXY_IP:3128" \
     --env "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" \
     "$(cb_image_for_profile base)" claude setup-token || cb_die "claude setup-token failed"
@@ -418,10 +408,7 @@ cmd_shell() {
   if [ -t 0 ] && [ -t 1 ]; then
     tty=(-i -t)
   fi
-  if [ -f "$CB_TOKEN_FILE" ]; then
-    IFS= read -r CLAUDE_CODE_OAUTH_TOKEN <"$CB_TOKEN_FILE" || true
-    export CLAUDE_CODE_OAUTH_TOKEN
-  fi
+  cb_export_token
   exec "$CB_DOCKER" exec "${tty[@]}" -w "$CB_PROJECT_DIR" -e CLAUDE_CODE_OAUTH_TOKEN "$CB_NAME" bash
 }
 
@@ -538,9 +525,13 @@ cb_settings_files() {
 }
 
 # JSONC: a grep-level read that ignores whole-line // comments.
+cb_settings_strip() {
+  grep -v '^[[:space:]]*//' "$1" 2>/dev/null || true
+}
+
 cb_settings_value() {
   local file="$1" key="$2"
-  grep -v '^[[:space:]]*//' "$file" 2>/dev/null |
+  cb_settings_strip "$file" |
     grep -Eo "\"(claudeCode|claude-code)\\.$key\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|true|false)" |
     tail -n 1 | sed -E 's/^[^:]*:[[:space:]]*//; s/^"//; s/"$//' || true
 }
@@ -565,7 +556,7 @@ doctor_settings() {
     # Nested repositories created inside the container are writable until the
     # next start; the IDE's git integration runs `git status` in them (hooks,
     # core.fsmonitor) on the host if it auto-detects subfolder repositories.
-    if ! grep -v '^[[:space:]]*//' "$f" 2>/dev/null |
+    if ! cb_settings_strip "$f" |
       grep -Eq '"git\.autoRepositoryDetection"[[:space:]]*:[[:space:]]*false'; then
       check_warn "$f: set \"git.autoRepositoryDetection\": false - otherwise the IDE runs git (and its hooks/fsmonitor) in repositories Claude creates inside the project"
     fi
@@ -604,6 +595,7 @@ EOF
 cmd_doctor() {
   local image info b state n=0 bad="" host_claude
   cb_load_config
+  # cb_find_docker exits when docker is missing; probe it in a subshell first.
   if ! (cb_find_docker) >/dev/null 2>&1; then
     check_fail "docker CLI not found"
   else
@@ -620,7 +612,7 @@ cmd_doctor() {
           check_fail "image $image missing (claude-box setup)"
         fi
       done
-      info="$(cb_docker network inspect --format '{{.Internal}} {{.Options}} {{range .IPAM.Config}}{{.Subnet}}{{end}}' "$CB_NETWORK_INTERNAL" 2>/dev/null || true)"
+      info="$(cb_internal_network_info)"
       case "$info" in
         "") check_fail "network $CB_NETWORK_INTERNAL missing (claude-box setup)" ;;
         "true "*)
@@ -632,11 +624,11 @@ cmd_doctor() {
           ;;
         *) check_fail "network $CB_NETWORK_INTERNAL is not internal ($info)" ;;
       esac
-      state="$(cb_docker inspect --format '{{.State.Running}}' "$CB_PROXY_NAME" 2>/dev/null || true)"
-      case "$state" in
-        true*) check_ok "proxy $CB_PROXY_NAME is running" ;;
-        *) check_fail "proxy $CB_PROXY_NAME is not running (claude-box setup)" ;;
-      esac
+      if cb_proxy_running; then
+        check_ok "proxy $CB_PROXY_NAME is running"
+      else
+        check_fail "proxy $CB_PROXY_NAME is not running (claude-box setup)"
+      fi
     fi
   fi
 

@@ -29,12 +29,9 @@ never_direct allow all"
 fi
 
 mkdir -p /run/squid
-sed -e "s#@SUBNET@#$subnet#" /usr/local/share/claude-box/squid.conf.in > "$conf.tmp"
-printf '%s\n' "$peer" > "$conf.peer"
-awk -v peerfile="$conf.peer" '
-  $0 == "@UPSTREAM@" { while ((getline line < peerfile) > 0) print line; next }
-  { print }' "$conf.tmp" > "$conf"
-rm -f "$conf.tmp" "$conf.peer"
+# @UPSTREAM@ is the last line of the template; the peer settings replace it.
+sed -e "s#@SUBNET@#$subnet#" -e '/^@UPSTREAM@$/d' /usr/local/share/claude-box/squid.conf.in > "$conf"
+printf '%s\n' "$peer" >> "$conf"
 
 squid -k parse -f "$conf"
 exec squid -N -f "$conf"

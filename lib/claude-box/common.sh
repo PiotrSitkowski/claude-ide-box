@@ -87,7 +87,7 @@ cb_path_inside() {
         # The project itself may live under a symlinked path (e.g. /tmp on
         # macOS); compare against the physical project path too.
         local pdir
-        pdir="$(cd -P "$dir" 2>/dev/null && pwd -P)" || return 1
+        pdir="$(cb_phys_dir "$dir")" || return 1
         case "$resolved" in
           "$pdir" | "$pdir"/*) return 0 ;;
           *) return 1 ;;
@@ -101,6 +101,15 @@ cb_path_inside() {
   return 1
 }
 
+# Physical (symlink-free) spelling of DIR, cached for the project.
+cb_phys_dir() {
+  if [ "$1" = "${CB_PROJECT_DIR:-}" ] && [ -n "${CB_PROJECT_PHYS:-}" ]; then
+    printf '%s\n' "$CB_PROJECT_PHYS"
+  else
+    (cd -P "$1" 2>/dev/null && pwd -P)
+  fi
+}
+
 # cb_to_project_path DIR PATH - express a resolved PATH inside DIR through
 # DIR's own spelling. The container mounts the project at the logical path the
 # IDE uses (e.g. /tmp/x on macOS, where /tmp -> /private/tmp), so mount
@@ -110,7 +119,7 @@ cb_to_project_path() {
   case "$path" in
     "$dir" | "$dir"/*) printf '%s\n' "$path"; return 0 ;;
   esac
-  pdir="$(cd -P "$dir" 2>/dev/null && pwd -P)" || pdir="$dir"
+  pdir="$(cb_phys_dir "$dir")" || pdir="$dir"
   case "$path" in
     "$pdir") printf '%s\n' "$dir" ;;
     "$pdir"/*) printf '%s%s\n' "$dir" "${path#"$pdir"}" ;;
@@ -404,17 +413,16 @@ cb_set_project() {
 
   local home_phys
   home_phys="$(cd -P "$HOME" 2>/dev/null && pwd -P)" || home_phys="$HOME"
-  local d
+  local d h
   for d in "$dir" "$phys"; do
     if [ "$d" = "/" ]; then
       cb_die "refusing to use / as the project directory (open a project folder in the IDE)"
     fi
-    case "$HOME/" in
-      "$d"/*) cb_die "refusing to mount '$d': it is the home directory or contains it (open a project folder in the IDE)" ;;
-    esac
-    case "$home_phys/" in
-      "$d"/*) cb_die "refusing to mount '$d': it is the home directory or contains it (open a project folder in the IDE)" ;;
-    esac
+    for h in "$HOME" "$home_phys"; do
+      case "$h/" in
+        "$d"/*) cb_die "refusing to mount '$d': it is the home directory or contains it (open a project folder in the IDE)" ;;
+      esac
+    done
     for sensitive in "$HOME/.ssh" "$HOME/.aws" "$HOME/.gnupg" "$HOME/.docker" "$HOME/.kube" \
       "$HOME/.config" "$HOME/.local" "$HOME/Library" "$CB_CONFIG_DIR" "$CB_STATE_DIR"; do
       case "$d/" in
@@ -424,6 +432,7 @@ cb_set_project() {
   done
 
   CB_PROJECT_DIR="$dir"
+  CB_PROJECT_PHYS="$phys"
   CB_NAME="$(cb_container_name "$dir")"
   CB_VOLUME="$CB_NAME-home"
   CB_PROJECT_CONFIG="$CB_PROJECTS_DIR/$CB_NAME.conf"
@@ -475,6 +484,43 @@ cb_require_docker() {
   if ! cb_docker_ready; then
     cb_die "cannot reach the Docker daemon - is Docker (Desktop) running? Nothing was started on the host."
   fi
+}
+
+cb_require_network() {
+  cb_docker network inspect "$CB_NETWORK_INTERNAL" >/dev/null 2>&1 ||
+    cb_die "network $CB_NETWORK_INTERNAL not found - run 'claude-box setup'"
+}
+
+# Print "<internal> <options> <subnet>" of the internal network, or nothing.
+cb_internal_network_info() {
+  cb_docker network inspect --format '{{.Internal}} {{.Options}} {{range .IPAM.Config}}{{.Subnet}}{{end}}' \
+    "$CB_NETWORK_INTERNAL" 2>/dev/null || true
+}
+
+cb_proxy_running() {
+  [ "$(cb_docker inspect --format '{{.State.Running}}' "$CB_PROXY_NAME" 2>/dev/null || true)" = "true" ]
+}
+
+# Export CLAUDE_CODE_OAUTH_TOKEN from the token file, if it holds one.
+cb_export_token() {
+  local token=""
+  [ -f "$CB_TOKEN_FILE" ] || return 0
+  IFS= read -r token <"$CB_TOKEN_FILE" || true
+  if [ -n "$token" ]; then
+    CLAUDE_CODE_OAUTH_TOKEN="$token"
+    export CLAUDE_CODE_OAUTH_TOKEN
+  fi
+}
+
+# cb_toggle_word LIST WORD on|off - print LIST with WORD removed, and
+# appended again when on.
+cb_toggle_word() {
+  local out="" w
+  for w in $1; do
+    [ "$w" = "$2" ] || out="$out $w"
+  done
+  [ "$3" != on ] || out="$out $2"
+  printf '%s\n' "${out# }"
 }
 
 # --------------------------------------------------------------------------
@@ -563,8 +609,9 @@ CB_TAB="$(printf '\t')"
 # patterns. A pattern containing "/" is anchored at the project root (shell
 # glob); a pattern without "/" matches a name at any depth. Nothing is pruned:
 # the container can move files into any directory, so every directory counts.
+# With a second argument, every ".git" is printed too (one walk for both).
 cb_find_masks() {
-  local dir="$1" pat names="" f
+  local dir="$1" with_git="${2:-}" pat names="" f
   local -a find_expr
   find_expr=()
   set -f
@@ -589,16 +636,16 @@ cb_find_masks() {
     esac
   done
   set +f
+  if [ -n "$with_git" ]; then
+    if [ -n "$names" ]; then
+      find_expr+=(-o)
+    fi
+    find_expr+=(-name .git)
+    names=1
+  fi
   if [ -n "$names" ]; then
     find "$dir" \( "${find_expr[@]}" \) -print0 2>/dev/null || true
   fi
-}
-
-# Print NUL-terminated paths of every .git (directory or file) below the
-# project root. The IDE and git on the host run hooks and config such as
-# core.fsmonitor from nested repositories too, so they must be read-only.
-cb_find_nested_git() {
-  find "$1" -mindepth 2 -name .git ! -type l -prune -print0 2>/dev/null || true
 }
 
 # Emit one mount spec line. Paths that docker's CSV-parsed --mount syntax (or
@@ -619,8 +666,18 @@ cb_emit_mount() {
 # bad (a path that cannot be mounted safely).
 # Creates missing read-only directories on the host.
 cb_compute_mounts() {
-  local dir="$1" f target e path
-  cb_find_masks "$dir" | while IFS= read -r -d '' f; do
+  local dir="$1" f target e path with_git=""
+  # Nested repositories: git and the IDE on the host run hooks and config such
+  # as core.fsmonitor from them too, so every .git below the root is read-only.
+  [ "$CFG_GIT_WRITABLE" = "1" ] || with_git=1
+  cb_find_masks "$dir" "$with_git" | while IFS= read -r -d '' f; do
+    case "$f" in
+      "$dir/.git") continue ;;
+      */.git)
+        [ -L "$f" ] || cb_emit_mount ro "$f"
+        continue
+        ;;
+    esac
     target="$f"
     if [ -L "$f" ]; then
       target="$(cb_resolve_path "$f" 2>/dev/null)" || continue
@@ -665,11 +722,6 @@ cb_compute_mounts() {
     fi
     cb_emit_mount ro "$path"
   done
-  if [ "$CFG_GIT_WRITABLE" != "1" ]; then
-    cb_find_nested_git "$dir" | while IFS= read -r -d '' f; do
-      cb_emit_mount ro "$f"
-    done | sort -u
-  fi
 }
 
 # File listing the paths masked when the container was last created.
@@ -731,17 +783,13 @@ CB_END
 # Container lifecycle
 # --------------------------------------------------------------------------
 
+# Set CB_UID/CB_GID: the container user's IDs (the host user's, or 1000
+# when claude-box runs as root, or CONTAINER_UID/CONTAINER_GID).
 cb_container_uid() {
-  local uid gid
-  uid="${CFG_CONTAINER_UID:-$(id -u)}"
-  gid="${CFG_CONTAINER_GID:-$(id -g)}"
-  if [ "$uid" = "0" ]; then
-    uid=1000
-  fi
-  if [ "$gid" = "0" ]; then
-    gid=1000
-  fi
-  printf '%s %s\n' "$uid" "$gid"
+  CB_UID="${CFG_CONTAINER_UID:-$(id -u)}"
+  CB_GID="${CFG_CONTAINER_GID:-$(id -g)}"
+  [ "$CB_UID" != "0" ] || CB_UID=1000
+  [ "$CB_GID" != "0" ] || CB_GID=1000
 }
 
 cb_cpus() {
@@ -755,18 +803,16 @@ cb_cpus() {
   printf '%s\n' "$want"
 }
 
-# Fill CB_RUN_ARGS with the full `docker run` argument list for the project.
+# Fill CB_RUN_ARGS with the `docker run` options for the project (without
+# "run -d", the config label and the image, which cb_ensure_container adds).
+# Everything in it goes into the config hash; --cpus holds the configured
+# value and is clamped only when the container is created.
 cb_build_run_args() {
-  local image="$1" kind path mounts
-  local uidgid uid gid
-  uidgid="$(cb_container_uid)"
-  uid="${uidgid% *}"
-  gid="${uidgid#* }"
-  mounts="$(cb_compute_mounts "$CB_PROJECT_DIR")" || exit 1
-  CB_MOUNTS="$mounts"
+  local kind path
+  cb_container_uid
+  CB_MOUNTS="$(cb_compute_mounts "$CB_PROJECT_DIR")" || exit 1
 
   CB_RUN_ARGS=(
-    run -d
     --name "$CB_NAME"
     --hostname claude-box
     --label "io.claude-box.project=$CB_PROJECT_DIR"
@@ -779,9 +825,9 @@ cb_build_run_args() {
     --tmpfs "/tmp:rw,nosuid,nodev,size=$CFG_TMP_SIZE"
     --pids-limit "$CFG_PIDS_LIMIT"
     --memory "$CFG_MEMORY"
-    --cpus "$(cb_cpus)"
+    --cpus "$CFG_CPUS"
     --init
-    --user "$uid:$gid"
+    --user "$CB_UID:$CB_GID"
     --env "HOME=/home/claude"
     --env "HTTPS_PROXY=http://$CFG_PROXY_IP:3128"
     --env "https_proxy=http://$CFG_PROXY_IP:3128"
@@ -799,7 +845,7 @@ cb_build_run_args() {
   if [ "$CFG_CLAUDEAI_CONNECTORS" = "0" ]; then
     CB_RUN_ARGS+=(--env "ENABLE_CLAUDEAI_MCP_SERVERS=false")
   fi
-  while IFS="$(printf '\t')" read -r kind path; do
+  while IFS="$CB_TAB" read -r kind path; do
     [ -n "$kind" ] || continue
     case "$path" in
       "$CB_PROJECT_DIR"/*) ;;
@@ -812,9 +858,14 @@ cb_build_run_args() {
       ro) CB_RUN_ARGS+=(--mount "type=bind,src=$path,dst=$path,readonly") ;;
     esac
   done <<EOF
-$mounts
+$CB_MOUNTS
 EOF
-  CB_RUN_ARGS+=("$image" sleep infinity)
+}
+
+# cb_run_args_hash IMAGE_ID - short hash of CB_RUN_ARGS and the image, stored
+# as a label so a changed configuration is detected.
+cb_run_args_hash() {
+  { printf '%s\n' "${CB_RUN_ARGS[@]}"; printf '%s\n' "$1"; } | cb_sha256 | cut -c1-16
 }
 
 # Busy = a claude process is running inside the container.
@@ -830,17 +881,15 @@ cb_container_busy() {
 cb_ensure_container() {
   local image image_id hash state running label
   image="$(cb_image_for_profile "$CFG_PROFILE")"
-  cb_require_docker
 
   cb_lock "$CB_NAME"
-  image_id="$(cb_docker image inspect --format '{{.Id}}' "$image" 2>/dev/null)" ||
+  if ! image_id="$(cb_docker image inspect --format '{{.Id}}' "$image" 2>/dev/null)"; then
+    cb_require_docker
     cb_die "image $image not found - run 'claude-box setup' (with --profile $CFG_PROFILE for a profile)"
-  if ! cb_docker network inspect "$CB_NETWORK_INTERNAL" >/dev/null 2>&1; then
-    cb_die "network $CB_NETWORK_INTERNAL not found - run 'claude-box setup'"
   fi
 
-  cb_build_run_args "$image"
-  hash="$( { printf '%s\n' "${CB_RUN_ARGS[@]}"; printf '%s\n' "$image_id"; } | cb_sha256 | cut -c1-16)"
+  cb_build_run_args
+  hash="$(cb_run_args_hash "$image_id")"
 
   state="$(cb_docker inspect --format '{{.State.Running}} {{index .Config.Labels "io.claude-box.config"}}' "$CB_NAME" 2>/dev/null || true)"
   if [ -n "$state" ]; then
@@ -855,19 +904,29 @@ cb_ensure_container() {
       # Recompute the mounts now that no process of the old container can
       # still be changing the project tree (e.g. planting symlinks between
       # our checks and `docker run`).
-      cb_build_run_args "$image"
-      hash="$( { printf '%s\n' "${CB_RUN_ARGS[@]}"; printf '%s\n' "$image_id"; } | cb_sha256 | cut -c1-16)"
+      cb_build_run_args
+      hash="$(cb_run_args_hash "$image_id")"
       state=""
     elif [ "$running" != "true" ]; then
+      cb_require_network
       cb_log "starting stopped container $CB_NAME"
       cb_docker start "$CB_NAME" >/dev/null 2>&1 || cb_die "cannot start container $CB_NAME (see 'docker start $CB_NAME')"
     fi
   fi
   if [ -z "$state" ]; then
+    cb_require_network
     cb_check_mask_record
-    # Insert the config label right after "run -d".
     local -a args
-    args=("${CB_RUN_ARGS[@]:0:2}" --label "io.claude-box.config=$hash" "${CB_RUN_ARGS[@]:2}")
+    local a prev=""
+    args=(run -d --label "io.claude-box.config=$hash")
+    for a in "${CB_RUN_ARGS[@]}"; do
+      if [ "$prev" = "--cpus" ]; then
+        a="$(cb_cpus)"
+      fi
+      args+=("$a")
+      prev="$a"
+    done
+    args+=("$image" sleep infinity)
     cb_log "creating container: docker $(cb_quote_args "${args[@]}")"
     local err
     if ! err="$(cb_docker "${args[@]}" 2>&1 >/dev/null)"; then

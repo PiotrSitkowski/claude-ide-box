@@ -53,9 +53,24 @@ cb_guard_state() {
   fi
 }
 
+# True when every bundled binary already points at WRAPPER.
+cb_guard_all_done() {
+  local b
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    [ -L "$b" ] && [ "$(readlink "$b")" = "$1" ] || return 1
+  done <<EOF
+$(cb_bundled_binaries)
+EOF
+}
+
 # cb_guard_apply WRAPPER [quiet] - serialised with a lock: two wrappers
 # starting at once must not both move the same binary to .orig.
 cb_guard_apply() {
+  # Fast path for every wrapper start: nothing to do, no lock needed.
+  if [ -n "${2:-}" ] && cb_guard_all_done "$1"; then
+    return 0
+  fi
   cb_lock guard
   cb_guard_apply_locked "$@"
   cb_unlock
@@ -87,9 +102,7 @@ cb_guard_apply_locked() {
     esac
     count=$((count + 1))
     printf 'guarded   %s\n' "$b"
-    if command -v cb_log >/dev/null 2>&1; then
-      cb_log "guard: $b -> $wrapper"
-    fi
+    cb_log "guard: $b -> $wrapper"
   done <<EOF
 $(cb_bundled_binaries)
 EOF
@@ -109,7 +122,7 @@ cb_guard_undo_locked() {
   local wrapper="$1" b
   while IFS= read -r b; do
     [ -n "$b" ] || continue
-    if [ -L "$b" ] && [ "$(readlink "$b")" = "$wrapper" ]; then
+    if [ "$(cb_guard_state "$b" "$wrapper")" = guarded ]; then
       if [ -f "$b.orig" ] && [ ! -L "$b.orig" ]; then
         rm -f "$b"
         mv "$b.orig" "$b"

@@ -100,65 +100,55 @@ cb_load_config
 #    path outside it cannot work there; it is dropped with a warning instead
 #    of mounting more of the host. Inline JSON values are kept.
 # ---------------------------------------------------------------------------
-path_value_ok() {
-  case "$1" in
+# keep_path FLAG VALUE - true when VALUE may be passed on; warns otherwise.
+keep_path() {
+  case "$2" in
     "" | "{"* | "["*) return 0 ;;
   esac
-  cb_path_inside "$CB_PROJECT_DIR" "$1"
+  if cb_path_inside "$CB_PROJECT_DIR" "$2"; then
+    return 0
+  fi
+  cb_warn "dropping $1 $2: host path outside the project is not available in the container"
+  return 1
 }
 
 args=()
 while [ $# -gt 0 ]; do
   arg="$1"
   shift
-  flag=""
-  inline=""
   case "$arg" in
     --mcp-config=* | --settings=* | --plugin-dir=* | --add-dir=* | --debug-file=* | \
       --system-prompt-file=* | --append-system-prompt-file=*)
-      flag="${arg%%=*}"
-      inline="${arg#*=}"
-      if path_value_ok "$inline"; then
+      if keep_path "${arg%%=*}" "${arg#*=}"; then
         args+=("$arg")
-      else
-        cb_warn "dropping $flag $inline: host path outside the project is not available in the container"
       fi
-      continue
       ;;
     --mcp-config | --add-dir)
       # variadic: consume values up to the next flag
-      flag="$arg"
       kept=()
       while [ $# -gt 0 ]; do
         case "$1" in -*) break ;; esac
-        if path_value_ok "$1"; then
+        if keep_path "$arg" "$1"; then
           kept+=("$1")
-        else
-          cb_warn "dropping $flag $1: host path outside the project is not available in the container"
         fi
         shift
       done
       if [ ${#kept[@]} -gt 0 ]; then
-        args+=("$flag" "${kept[@]}")
+        args+=("$arg" "${kept[@]}")
       fi
-      continue
       ;;
     --settings | --plugin-dir | --debug-file | --system-prompt-file | --append-system-prompt-file)
-      flag="$arg"
       if [ $# -eq 0 ]; then
-        args+=("$flag")
-        continue
-      fi
-      if path_value_ok "$1"; then
-        args+=("$flag" "$1")
+        args+=("$arg")
       else
-        cb_warn "dropping $flag $1: host path outside the project is not available in the container"
+        if keep_path "$arg" "$1"; then
+          args+=("$arg" "$1")
+        fi
+        shift
       fi
-      shift
-      continue
       ;;
+    *) args+=("$arg") ;;
   esac
-  args+=("$arg")
 done
 
 # ---------------------------------------------------------------------------
@@ -179,15 +169,7 @@ cb_ensure_container
 # 7. Environment for the container: names only on the command line; docker
 #    reads the values from our environment, so they never show up in `ps`.
 # ---------------------------------------------------------------------------
-if [ -f "$CB_TOKEN_FILE" ]; then
-  token=""
-  IFS= read -r token <"$CB_TOKEN_FILE" || true
-  if [ -n "$token" ]; then
-    CLAUDE_CODE_OAUTH_TOKEN="$token"
-    export CLAUDE_CODE_OAUTH_TOKEN
-  fi
-  unset token
-fi
+cb_export_token
 env_names="$(cb_env_passthrough)"
 env_args=()
 for name in $env_names; do
