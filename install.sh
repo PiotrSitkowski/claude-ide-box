@@ -77,7 +77,9 @@ the project (git hooks and core.fsmonitor would run on the host).
     "claudeCode.useTerminal": false,
     "git.autoRepositoryDetection": false
 
-Then:
+Then run the guided first run,
+    claude-ide-box quickstart
+or the same steps one by one:
     claude-ide-box setup     # build images, networks, proxy
     claude-ide-box login     # subscription token (or export ANTHROPIC_API_KEY)
     claude-ide-box guard     # route the extension's bundled binary to the wrapper

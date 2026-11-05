@@ -144,6 +144,20 @@ cd claude-ide-box && ./install.sh
 `claude-ide-box-exec` into `~/.local/bin`, needs no root, and is safe to re-run. It prints the exact
 settings snippet for your machine.
 
+The shortest way from there is the guided first run:
+
+```bash
+claude-ide-box quickstart
+```
+
+It checks Docker, asks which [profiles](#what-runs-in-the-box) to build and runs `setup`, signs
+you in (subscription, an existing token, or an explanation of how to use an API key), runs
+`guard`, prints the settings snippet for every IDE it finds, and ends with `doctor`. A settings
+file is written only when it does not exist yet or is empty (`{}`); an existing one is JSONC
+with your comments and is never rewritten by a script - quickstart shows what to add and offers to
+open it in `$VISUAL`/`$EDITOR` (or the system text editor). A failing step stops the run; running
+it again only offers the steps that are already done. The manual steps per platform follow.
+
 ### macOS
 
 The reference platform is macOS 15 on Intel with Docker Desktop (see the manual checklist in
