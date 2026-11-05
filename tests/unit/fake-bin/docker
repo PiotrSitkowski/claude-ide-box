@@ -142,7 +142,8 @@ case "$cmd" in
       fi
       prev="$a"
     done
-    echo "true $label" >"$dir/state"
+    # Containers without a config label (the proxy) inspect as plain "true".
+    echo "true${label:+ $label}" >"$dir/state"
     echo "0123456789abcdef-container-id"
     ;;
   start)

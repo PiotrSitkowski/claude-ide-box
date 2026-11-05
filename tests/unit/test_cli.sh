@@ -923,3 +923,182 @@ test_logs_have_no_colour_codes_when_not_a_terminal() {
   esc="$(printf '\033')"
   assert_not_contains "$OUT" "$esc"
 }
+
+# --- quickstart ------------------------------------------------------------------
+
+# run_quickstart INPUT [ARGS...] - run quickstart in $PROJECT with INPUT on stdin.
+run_quickstart() {
+  local input="$1"
+  shift
+  set +e
+  OUT="$(cd "${RUN_DIR:-$PROJECT}" && printf '%s' "$input" | "$CLI" quickstart "$@" 2>"$SANDBOX/stderr")"
+  STATUS=$?
+  set -e
+  ERR="$(cat "$SANDBOX/stderr")"
+}
+
+settings_dir() {
+  if [ "$(uname -s)" = Darwin ]; then
+    printf '%s/Library/Application Support/%s/User\n' "$HOME" "$1"
+  else
+    printf '%s/.config/%s/User\n' "$HOME" "$1"
+  fi
+}
+
+quickstart_host() {
+  fake_ps "  1 /sbin/init"
+  make_extensions
+  rm -f "$SANDBOX/bin/claude"
+  mkdir -p "$(settings_dir Code)"
+}
+
+project_conf_file() {
+  printf '%s/.config/claude-ide-box/projects/claude-ide-box-my-project-%s.conf\n' "$HOME" "$(sha8 "$PROJECT")"
+}
+
+# Answers: profiles, use them here, auth choice 2 + token, guard, create settings.
+QS_FIRST_RUN='python
+y
+2
+sk-ant-oat01-quick
+y
+y
+'
+
+test_quickstart_walks_through_every_step() {
+  quickstart_host
+  run_quickstart "$QS_FIRST_RUN"
+  assert_status 0 "$STATUS" "quickstart failed: $ERR"
+  # setup with the chosen profile, and the profile set for this project
+  assert_contains "$(calls)" "build"
+  assert_contains "$(calls)" "claude-ide-box/env:python"
+  assert_contains "$(cat "$(project_conf_file)")" 'PROFILE="python"'
+  # token stored with mode 600, never echoed
+  assert_eq "sk-ant-oat01-quick" "$(cat "$HOME/.config/claude-ide-box/token")"
+  assert_not_contains "$OUT" "sk-ant-oat01-quick"
+  # guard applied
+  local b
+  for b in $(all_bundled); do
+    [ -L "$b" ] || fail "$b is not guarded"
+  done
+  # settings created because the file did not exist
+  local s
+  s="$(cat "$(settings_dir Code)/settings.json")"
+  assert_contains "$s" "\"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\""
+  assert_contains "$s" '"claudeCode.useTerminal": false'
+  assert_contains "$s" '"git.autoRepositoryDetection": false'
+  # doctor ran last and passed
+  assert_contains "$OUT" "All checks passed"
+}
+
+test_quickstart_is_idempotent() {
+  quickstart_host
+  run_quickstart "$QS_FIRST_RUN"
+  assert_status 0 "$STATUS"
+  local settings
+  settings="$(cat "$(settings_dir Code)/settings.json")"
+  : >"$FAKE_DOCKER_DIR/calls"
+  # Second run: do not rebuild, keep the token; nothing else to ask.
+  run_quickstart 'n
+n
+'
+  assert_status 0 "$STATUS" "second run failed: $ERR"
+  assert_not_contains "$(calls)" "build"
+  assert_eq "sk-ant-oat01-quick" "$(cat "$HOME/.config/claude-ide-box/token")"
+  assert_eq "$settings" "$(cat "$(settings_dir Code)/settings.json")"
+  assert_contains "$OUT" "All checks passed"
+}
+
+test_quickstart_fails_closed_without_docker_daemon() {
+  quickstart_host
+  FAKE_DOCKER_DOWN=1 run_quickstart "$QS_FIRST_RUN"
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "Docker"
+  assert_not_contains "$(calls)" "build"
+  assert_file_missing "$HOME/.config/claude-ide-box/token"
+  local b
+  for b in $(all_bundled); do
+    [ ! -L "$b" ] || fail "$b was guarded although quickstart stopped"
+  done
+}
+
+test_quickstart_stops_when_setup_fails() {
+  quickstart_host
+  FAKE_BUILD_STATUS=1 run_quickstart "$QS_FIRST_RUN"
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "quickstart stopped"
+  assert_file_missing "$HOME/.config/claude-ide-box/token"
+  assert_file_missing "$(settings_dir Code)/settings.json"
+}
+
+test_quickstart_stops_when_input_ends() {
+  quickstart_host
+  run_quickstart ''
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "no answer"
+  assert_not_contains "$(calls)" "build"
+}
+
+test_quickstart_asks_again_for_an_unknown_profile() {
+  quickstart_host
+  run_quickstart 'nosuchprofile
+python
+y
+4
+y
+y
+'
+  assert_status 0 "$STATUS" "$ERR"
+  assert_contains "$OUT$ERR" "unknown profile 'nosuchprofile'"
+  assert_contains "$(calls)" "claude-ide-box/env:python"
+}
+
+test_quickstart_never_edits_existing_jsonc_settings() {
+  quickstart_host
+  local f
+  f="$(settings_dir Code)/settings.json"
+  printf '{\n  // my settings\n  "editor.fontSize": 14,\n}\n' >"$f"
+  cp "$f" "$SANDBOX/settings.before"
+  # profiles: none; auth: skip; guard: yes; open the file: no
+  run_quickstart '
+4
+y
+n
+'
+  # doctor fails because the wrapper setting is missing - that is the point
+  assert_nonzero "$STATUS"
+  cmp -s "$f" "$SANDBOX/settings.before" || fail "settings.json was modified"
+  assert_contains "$OUT" "\"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\","
+  assert_contains "$OUT" "$f"
+  assert_contains "$OUT" "claudeProcessWrapper is not set"
+}
+
+test_quickstart_opens_settings_in_the_editor_on_request() {
+  quickstart_host
+  local f
+  f="$(settings_dir Code)/settings.json"
+  printf '{ "editor.fontSize": 14 }\n' >"$f"
+  cat >"$SANDBOX/bin/fake-editor" <<EOS
+#!/bin/sh
+printf '%s\n' "\$@" >"$SANDBOX/editor.args"
+EOS
+  chmod +x "$SANDBOX/bin/fake-editor"
+  EDITOR=fake-editor VISUAL='' run_quickstart '
+4
+y
+y
+'
+  assert_eq "$f" "$(cat "$SANDBOX/editor.args" 2>/dev/null)"
+}
+
+test_quickstart_api_key_choice_stores_nothing() {
+  quickstart_host
+  run_quickstart '
+3
+y
+y
+'
+  assert_status 0 "$STATUS" "$ERR"
+  assert_file_missing "$HOME/.config/claude-ide-box/token"
+  assert_contains "$OUT" "ANTHROPIC_API_KEY"
+}

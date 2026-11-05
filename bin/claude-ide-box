@@ -45,6 +45,8 @@ claude-ide-box $CB_VERSION - run the Claude Code IDE extension against a sandbox
 Usage: claude-ide-box <command> [options]
 
 Setup
+  quickstart                  guided first run: checks, setup, sign-in, guard, IDE
+                              settings and doctor; safe to run again
   setup [--profile NAME]...   build images, create networks, start the egress proxy
   login                       get a long-lived token with 'claude setup-token' in a
                               throw-away container; stored in $CB_TOKEN_FILE
@@ -1149,6 +1151,285 @@ EOF
 }
 
 # --------------------------------------------------------------------------
+# quickstart: a guided first run. Every step can be re-run; a failing step
+# stops everything after it.
+# --------------------------------------------------------------------------
+
+QS_STEP=""
+
+qs_step() {
+  QS_STEP="$1"
+  say ""
+  say "${C_BOLD}[$1/6] $2${C_OFF}"
+}
+
+qs_stop() {
+  cb_die "quickstart stopped at step $QS_STEP: $* - fix it and run 'claude-ide-box quickstart' again (finished steps are only offered again)"
+}
+
+# qs_ask PROMPT DEFAULT - read one answer into QS_ANSWER from the user's
+# stdin (kept on fd 4, because loops over here-documents replace stdin). A
+# closed stdin stops quickstart rather than taking defaults nobody chose.
+qs_ask() {
+  printf '%s ' "$1"
+  if ! IFS= read -r QS_ANSWER <&4; then
+    printf '\n'
+    qs_stop "no answer (input ended)"
+  fi
+  [ -n "$QS_ANSWER" ] || QS_ANSWER="$2"
+}
+
+# qs_yes PROMPT y|n - ask a yes/no question with a default.
+qs_yes() {
+  local hint="[y/N]"
+  [ "$2" = n ] || hint="[Y/n]"
+  while :; do
+    qs_ask "$1 $hint" "$2"
+    case "$QS_ANSWER" in
+      y | Y | yes | Yes) return 0 ;;
+      n | N | no | No) return 1 ;;
+      *) say "please answer y or n" ;;
+    esac
+  done
+}
+
+qs_check_install() {
+  local on_path
+  qs_step 1 "Installation"
+  on_path="$(command -v claude-ide-box 2>/dev/null || true)"
+  if [ -n "$on_path" ] && [ "$(cb_resolve_path "$on_path" 2>/dev/null || true)" = "$CB_BIN_DIR/claude-ide-box" ]; then
+    check_ok "claude-ide-box on PATH: $on_path"
+  else
+    check_warn "running from $CB_BIN_DIR; install with ./install.sh so the wrapper path in the IDE settings stays stable"
+  fi
+  if ! (cb_find_docker) >/dev/null 2>&1; then
+    qs_stop "the docker CLI was not found - install Docker Desktop (macOS, Windows) or Docker Engine (Linux)"
+  fi
+  cb_find_docker
+  check_ok "docker CLI: $CB_DOCKER"
+  if ! cb_docker_ready; then
+    qs_stop "the Docker daemon is not reachable - start Docker (Desktop) and try again"
+  fi
+  check_ok "Docker daemon $(cb_docker version --format '{{.Server.Version}}' 2>/dev/null)"
+  if command -v git >/dev/null 2>&1; then
+    check_ok "git: $(command -v git)"
+  else
+    check_warn "git is not installed on the host"
+  fi
+}
+
+qs_setup() {
+  local in_project=0 current list
+  qs_step 2 "Images, network and proxy"
+  if (cb_set_project "${PWD:-$(pwd)}") >/dev/null 2>&1; then
+    in_project=1
+    project_from_pwd
+  fi
+  cb_load_config
+  current="$(cb_profile_list "$CFG_PROFILE")"
+  if cb_docker image inspect --format '{{.Id}}' "$(cb_image_for_profile base)" >/dev/null 2>&1 &&
+    cb_docker image inspect --format '{{.Id}}' "$CB_PROXY_IMAGE" >/dev/null 2>&1 && cb_proxy_running; then
+    say "Images are built and the proxy is running."
+    qs_yes "Rebuild the images and restart the proxy?" n || return 0
+  fi
+  cmd_profiles
+  say ""
+  while :; do
+    qs_ask "Profiles to build, separated by spaces (Enter: ${current:-none}):" "$current"
+    list="$(cb_profile_list "$(printf '%s' "$QS_ANSWER" | tr ',' ' ')")"
+    if (cb_require_profiles "$list") 2>/dev/null; then
+      break
+    fi
+    (cb_require_profiles "$list") || true
+  done
+  if [ "$in_project" = 1 ] && [ -n "$list" ] && [ "$list" != "$current" ]; then
+    if qs_yes "Use '$list' for this project ($CB_PROJECT_DIR)?" y; then
+      (cmd_profile "$list") || qs_stop "could not set the project's profiles"
+    fi
+  fi
+  local -a args
+  args=()
+  [ -z "$list" ] || args=(--profile "$(printf '%s' "$list" | tr ' ' ',')")
+  (cmd_setup ${args[@]+"${args[@]}"}) || qs_stop "setup failed (see the messages above)"
+}
+
+qs_login() {
+  local token=""
+  qs_step 3 "Sign-in"
+  if [ -f "$CB_TOKEN_FILE" ]; then
+    say "A token is stored in $CB_TOKEN_FILE."
+    qs_yes "Replace it?" n || return 0
+  fi
+  say "  1) Claude subscription (Pro/Max): sign in now - opens a URL to visit in your browser"
+  say "  2) paste a token you already have (sk-ant-...)"
+  say "  3) API key instead of a subscription"
+  say "  4) skip for now"
+  while :; do
+    qs_ask "Choose 1-4 (Enter: 1):" 1
+    case "$QS_ANSWER" in
+      1)
+        (cmd_login <&4) || qs_stop "sign-in failed"
+        return 0
+        ;;
+      2)
+        printf 'Token (input is hidden): '
+        IFS= read -r -s token <&4 || qs_stop "no answer (input ended)"
+        printf '\n'
+        (cb_store_token "$token") || qs_stop "the token was not accepted"
+        return 0
+        ;;
+      3)
+        say "claude-ide-box does not store API keys. The wrapper passes ANTHROPIC_API_KEY from the"
+        say "IDE's environment into the container, so the IDE has to be started with it set"
+        say "(macOS: 'launchctl setenv ANTHROPIC_API_KEY ...' before opening the IDE; Linux: your"
+        say "desktop session's environment, e.g. ~/.profile)."
+        return 0
+        ;;
+      4)
+        check_warn "no sign-in yet; run 'claude-ide-box login' later"
+        return 0
+        ;;
+      *) say "please choose 1, 2, 3 or 4" ;;
+    esac
+  done
+}
+
+qs_guard() {
+  local b n=0 todo=0
+  qs_step 4 "Route the extension's bundled binary to the wrapper (guard)"
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    n=$((n + 1))
+    [ "$(cb_guard_state "$b" "$CB_WRAPPER")" = guarded ] || todo=$((todo + 1))
+  done <<EOF
+$(cb_bundled_binaries)
+EOF
+  if [ "$n" = 0 ]; then
+    check_warn "no Claude Code extension found; install it in your IDE, then run 'claude-ide-box guard'"
+    return 0
+  fi
+  if [ "$todo" = 0 ]; then
+    check_ok "all $n bundled binaries already point to the wrapper"
+    return 0
+  fi
+  say "$todo of $n bundled extension binaries still run Claude Code on the host if the"
+  say "extension ignores the wrapper setting. guard replaces them with links to the wrapper"
+  say "(the originals are kept; 'claude-ide-box guard --undo' restores them)."
+  if qs_yes "Guard them now?" y; then
+    (cb_guard_apply "$CB_WRAPPER") || qs_stop "guard failed"
+  else
+    check_warn "not guarded; doctor will report it"
+  fi
+}
+
+# The settings an IDE needs, as JSON members.
+qs_settings_members() {
+  local w
+  w="$(printf '%s' "$CB_WRAPPER" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+  printf '  "claudeCode.claudeProcessWrapper": "%s",\n' "$w"
+  printf '  "claudeCode.useTerminal": false,\n'
+  printf '  "git.autoRepositoryDetection": false\n'
+}
+
+# True when FILE holds the three settings already (doctor's own reading).
+qs_settings_done() {
+  local w
+  w="$(cb_settings_value "$1" claudeProcessWrapper)"
+  [ -n "$w" ] && [ "$(cb_resolve_path "$w" 2>/dev/null || true)" = "$CB_WRAPPER" ] &&
+    [ "$(cb_settings_value "$1" useTerminal)" != true ] &&
+    cb_settings_strip "$1" | grep -Eq '"git\.autoRepositoryDetection"[[:space:]]*:[[:space:]]*false'
+}
+
+# A settings file is only written when there is nothing in it to preserve:
+# missing, empty or "{}". JSONC with comments and trailing commas is never
+# rewritten by a script.
+qs_settings_writable() {
+  [ -f "$1" ] || return 0
+  [ -z "$(tr -d ' \t\r\n{}' <"$1")" ] && [ "$(tr -cd '{' <"$1" | wc -c | tr -d ' ')" -le 1 ]
+}
+
+# Open FILE for the user: $VISUAL or $EDITOR, else the desktop's text editor.
+qs_open() {
+  local editor="${VISUAL:-${EDITOR:-}}"
+  if [ -n "$editor" ]; then
+    # shellcheck disable=SC2086 # an editor setting may carry options, e.g. "code --wait"
+    $editor "$1" <&4
+  elif [ "$(uname -s)" = Darwin ]; then
+    open -t "$1"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$1" >/dev/null 2>&1 &
+  else
+    return 1
+  fi
+}
+
+qs_settings() {
+  local f dir found=0 tmp
+  qs_step 5 "IDE user settings"
+  while IFS= read -r f; do
+    dir="$(dirname "$f")"
+    [ -d "$dir" ] || [ -f "$f" ] || continue
+    found=1
+    if [ -f "$f" ] && qs_settings_done "$f"; then
+      check_ok "$f"
+      continue
+    fi
+    say ""
+    say "$f needs:"
+    say ""
+    qs_settings_members | sed 's/^/  /'
+    say ""
+    if qs_settings_writable "$f"; then
+      if qs_yes "The file is empty or missing. Create it with these settings?" y; then
+        tmp="$f.claude-ide-box.$$"
+        if ! { printf '{\n'; qs_settings_members; printf '}\n'; } >"$tmp" || ! mv "$tmp" "$f"; then
+          rm -f "$tmp"
+          qs_stop "cannot write $f"
+        fi
+        check_ok "wrote $f"
+      fi
+    else
+      say "It already has settings (JSONC, possibly with comments), so it is not edited"
+      say "automatically. Add the lines above inside the outer { }."
+      if qs_yes "Open it in your editor now?" n; then
+        qs_open "$f" || check_warn "no editor found; set EDITOR or open $f yourself"
+      fi
+    fi
+  done <<EOF
+$(cb_settings_files)
+EOF
+  if [ "$found" = 0 ]; then
+    check_warn "no IDE settings directory found (Antigravity, VS Code, Cursor). Add these to the USER settings.json of your IDE:"
+    qs_settings_members | sed 's/^/    /'
+  fi
+  say ""
+  say "Use USER settings only, never workspace settings: those live in the project, which Claude can edit."
+}
+
+cmd_quickstart() {
+  [ $# -eq 0 ] || cb_die "usage: claude-ide-box quickstart"
+  exec 4<&0
+  cb_colors
+  say "${C_BOLD}claude-ide-box quickstart${C_OFF} - checks, builds, signs in, guards and checks again."
+  say "Safe to run again: finished steps are only offered again. Ctrl-C stops at any point."
+  cb_load_config
+  qs_check_install
+  qs_setup
+  qs_login
+  qs_guard
+  qs_settings
+  qs_step 6 "Final check (doctor)"
+  if (cmd_doctor); then
+    say ""
+    say "Done. Open a project folder in the IDE and use the Claude Code panel."
+  else
+    say ""
+    say "Fix the [FAIL] lines above (often: restart the IDE after changing its settings), then run 'claude-ide-box doctor'."
+    return 1
+  fi
+}
+
+# --------------------------------------------------------------------------
 
 main() {
   local cmd="${1:-help}"
@@ -1172,6 +1453,7 @@ main() {
     profiles) cmd_profiles "$@" ;;
     guard) cmd_guard "$@" ;;
     doctor) cmd_doctor "$@" ;;
+    quickstart) cmd_quickstart "$@" ;;
     *) cb_die "unknown command '$cmd' (see 'claude-ide-box help')" ;;
   esac
 }
