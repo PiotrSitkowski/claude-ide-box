@@ -1,0 +1,12 @@
+# Default egress allowlist for claude-box (one domain per line; a leading dot
+# also matches subdomains). Source: "Network access requirements" in the Claude
+# Code docs (code.claude.com/docs/en/network-config), checked 2026-11-05.
+#
+# Claude API, feature flags, WebFetch domain safety check
+api.anthropic.com
+# claude.ai account authentication and OAuth token exchange / refresh
+claude.ai
+claude.com
+platform.claude.com
+# npm registry: plugin installs, npx-launched MCP servers
+registry.npmjs.org

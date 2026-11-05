@@ -1,0 +1,7 @@
+# Preset "github": composer and npm often fetch packages from GitHub.
+# WARNING: github.com accepts pushes, gists and issue comments from anyone with
+# a token, so this preset opens a generic exfiltration channel.
+github.com
+api.github.com
+codeload.github.com
+objects.githubusercontent.com

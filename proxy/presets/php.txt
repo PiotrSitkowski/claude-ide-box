@@ -1,0 +1,4 @@
+# Preset "php": composer and packagist.
+packagist.org
+repo.packagist.org
+getcomposer.org
