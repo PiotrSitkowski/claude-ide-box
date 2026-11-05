@@ -78,7 +78,7 @@ sequenceDiagram
 | Piece | What it does |
 |---|---|
 | `bin/claude-ide-box-exec` | The wrapper the extension runs. Writes nothing to stdout but the container's stdout, logs to `~/.local/state/claude-ide-box/wrapper.log`, never executes anything on the host except `docker`. |
-| `bin/claude-ide-box` | Management CLI: `setup`, `login`, `up`, `down`, `rm`, `shell`, `status`, `logs`, `allow`, `preset`, `guard`, `doctor`. |
+| `bin/claude-ide-box` | Management CLI: `quickstart`, `setup`, `login`, `up` (`--try`), `try`, `down`, `rm`, `shell`, `status`, `logs`, `allow`, `preset`, `guard`, `doctor`. |
 | `image/` | Debian bookworm + Node 22 + a pinned Claude Code. Non-root user with your UID/GID, no sudo. Optional language profiles (`php` ships). |
 | `proxy/` | squid as an unprivileged user: CONNECT to port 443 of allowlisted domains only, no cache, every denial logged. |
 | Networks | `claude-ide-box-internal` (`--internal`, no route out, host gets no address on it) and `claude-ide-box-egress` (only the proxy is on it). |
