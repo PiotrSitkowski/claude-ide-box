@@ -5,7 +5,7 @@
 #   CLAUDE_CODE_VERSION npm version of @anthropic-ai/claude-code to install.
 #   USER_UID/USER_GID   numeric IDs of the host user, so files written to the
 #                       bind-mounted project get the host user's ownership.
-ARG BASE_IMAGE=node:22-bookworm-slim
+ARG BASE_IMAGE=docker.io/library/node:22-bookworm-slim
 FROM ${BASE_IMAGE}
 
 ARG CLAUDE_CODE_VERSION=2.1.318

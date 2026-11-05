@@ -1,6 +1,6 @@
 # claude-ide-box egress proxy: squid that only allows CONNECT to port 443 of
 # allowlisted domains. No cache, logs to stdout (read with `docker logs`).
-ARG BASE_IMAGE=debian:bookworm-slim
+ARG BASE_IMAGE=docker.io/library/debian:bookworm-slim
 FROM ${BASE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \

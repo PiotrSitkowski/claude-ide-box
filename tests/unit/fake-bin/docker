@@ -15,16 +15,46 @@ need_daemon() {
   fi
 }
 
+# FAKE_ENGINE=podman makes this answer like Podman; FAKE_ROOTLESS=1 like a
+# rootless engine; FAKE_LIMITS="mem pids cpu" (true/false) and
+# FAKE_CGROUPS/FAKE_CONTROLLERS describe resource-limit support.
+engine="${FAKE_ENGINE:-docker}"
+
 cmd="${1:-}"
 shift || true
 case "$cmd" in
+  --version)
+    if [ "$engine" = podman ]; then
+      echo "podman version 4.9.3"
+    else
+      echo "Docker version 27.0.0, build fake"
+    fi
+    exit 0
+    ;;
   version)
     need_daemon
     echo "27.0.0"
     ;;
   info)
     need_daemon
-    echo "${FAKE_NCPU:-8}"
+    case "$*" in
+      *NCPU* | *Host.CPUs*) echo "${FAKE_NCPU:-8}" ;;
+      *MemoryLimit*)
+        [ "$engine" = docker ] || { echo "template: can't evaluate field MemoryLimit" >&2; exit 125; }
+        if [ "${FAKE_ROOTLESS:-0}" = 1 ]; then
+          echo "${FAKE_LIMITS:-true true true} [\"name=seccomp,profile=builtin\",\"name=rootless\"]"
+        else
+          echo "${FAKE_LIMITS:-true true true} [\"name=seccomp,profile=builtin\"]"
+        fi
+        ;;
+      *NetworkBackend*)
+        [ "$engine" = podman ] || { echo "template: can't evaluate field Host" >&2; exit 1; }
+        rl=false
+        [ "${FAKE_ROOTLESS:-0}" != 1 ] || rl=true
+        echo "${FAKE_NETWORK_BACKEND:-netavark} $rl ${FAKE_CGROUPS:-v2} ${FAKE_CONTROLLERS:-[\"cpu\",\"memory\",\"pids\"]}"
+        ;;
+      *) echo "fake info" ;;
+    esac
     ;;
   image)
     need_daemon
@@ -40,6 +70,7 @@ case "$cmd" in
       inspect)
         [ "${FAKE_NO_NETWORK:-0}" != "1" ] || { echo "Error: No such network" >&2; exit 1; }
         case "$*" in
+          *DNSEnabled*) echo "${FAKE_NETWORK_INFO:-true false 172.30.99.0/24}" ;;
           *--format*) echo "${FAKE_NETWORK_INFO:-true map[com.docker.network.bridge.inhibit_ipv4:true] 172.30.99.0/24}" ;;
           *) echo '[]' ;;
         esac
