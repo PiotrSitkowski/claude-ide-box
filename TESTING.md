@@ -34,8 +34,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 106 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 106 passed, 0 failed |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 108 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 108 passed, 0 failed |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | see the CI badge / pull request checks |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same

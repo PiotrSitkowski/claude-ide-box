@@ -85,6 +85,21 @@ test_allow_adds_domain_and_reloads_proxy() {
   assert_contains "$(calls)" "exec claude-box-proxy squid -k reconfigure"
 }
 
+test_allow_waits_for_proxy_reconfiguration() {
+  echo "true" >"$FAKE_DOCKER_DIR/state"
+  run_cli allow example.org
+  assert_status 0 "$STATUS"
+  assert_contains "$(calls)" "logs --since"
+  assert_contains "$OUT" "proxy reloaded"
+}
+
+test_allow_warns_when_proxy_does_not_come_back() {
+  echo "true" >"$FAKE_DOCKER_DIR/state"
+  FAKE_PROXY_STUCK=1 CLAUDE_BOX_RELOAD_TIMEOUT=1 run_cli allow example.org
+  assert_status 0 "$STATUS"
+  assert_contains "$ERR" "did not confirm"
+}
+
 test_allow_without_running_proxy_says_so() {
   run_cli allow example.org
   assert_status 0 "$STATUS"

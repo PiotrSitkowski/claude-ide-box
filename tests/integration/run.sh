@@ -390,11 +390,11 @@ if printf ' %s ' "${CLAUDE_BOX_IT_PROFILES:-}" | grep -q ' php '; then
     [ -z "$missing" ] && ok "PHP $(docker exec "$php_name" php -r 'echo PHP_VERSION;') has the PrestaShop extensions" ||
       not_ok "PHP extensions present" "missing:$missing"
     docker exec "$php_name" mysql --version >/dev/null 2>&1 && ok "mariadb client present" || not_ok "mariadb client present"
-    "$CLI" preset php on >/dev/null 2>&1 || true
+    preset_out="$("$CLI" preset php on 2>&1 || true)"
     out="$(docker exec -w "$PHP_PROJECT" "$php_name" composer show --all --no-interaction monolog/monolog 2>&1 || true)"
     case "$out" in
       *"name "*monolog/monolog*) ok "composer reaches packagist through the proxy without DNS" ;;
-      *) not_ok "composer reaches packagist through the proxy without DNS" "$(printf '%s\n' "$out" | tail -n 5)" ;;
+      *) not_ok "composer reaches packagist through the proxy without DNS" "preset: $preset_out"$'\n'"$(printf '%s\n' "$out" | tail -n 5)"$'\n'"allowlist: $(tr '\n' ' ' <"$XDG_STATE_HOME/claude-box/proxy/allowlist")" ;;
     esac
     "$CLI" preset php off >/dev/null 2>&1 || true
   else

@@ -126,11 +126,24 @@ cb_render_allowlist() {
 
 cb_reload_proxy() {
   if cb_docker_ready && [ "$(cb_docker inspect --format '{{.State.Running}}' "$CB_PROXY_NAME" 2>/dev/null || true)" = "true" ]; then
-    if cb_docker exec "$CB_PROXY_NAME" squid -k reconfigure -f /run/squid/squid.conf >/dev/null 2>&1; then
-      say "proxy reloaded"
-    else
+    local since tries=0 max
+    since="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    if ! cb_docker exec "$CB_PROXY_NAME" squid -k reconfigure -f /run/squid/squid.conf >/dev/null 2>&1; then
       cb_warn "could not reload the proxy; run 'claude-box setup' to restart it"
+      return 0
     fi
+    # `squid -k reconfigure` only sends a signal; the new allowlist applies
+    # once squid logs that it accepts connections again.
+    max=$((${CLAUDE_BOX_RELOAD_TIMEOUT:-15} * 5))
+    while [ "$tries" -lt "$max" ]; do
+      if cb_docker logs --since "$since" "$CB_PROXY_NAME" 2>&1 | grep -q 'Accepting HTTP Socket connections'; then
+        say "proxy reloaded"
+        return 0
+      fi
+      tries=$((tries + 1))
+      sleep 0.2
+    done
+    cb_warn "the proxy did not confirm the reload; check 'claude-box logs --all'"
   else
     say "proxy is not running; the change applies at the next 'claude-box setup'"
   fi
