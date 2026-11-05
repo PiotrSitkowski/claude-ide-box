@@ -39,6 +39,8 @@ relying on it.
 - [Threat model](#threat-model)
 - [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows with WSL2](#windows-with-wsl2)
 - [Daily use](#daily-use)
+- [What runs in the box](#what-runs-in-the-box) - [dev servers](#dev-servers-react-vite-next-django-) · [office documents](#office-documents)
+- [Modules](#modules)
 - [Network allowlist](#network-allowlist)
 - [Configuration](#configuration)
 - [Updating Claude Code](#updating-claude-code)
@@ -208,6 +210,8 @@ creates its container (a few seconds); later sessions reuse it.
 |---|---|
 | `claude-ide-box status` | proxy, network, this project's container, token |
 | `claude-ide-box shell` | bash in this project's container, e.g. to run `claude` in a terminal |
+| `claude-ide-box forward 5173` | open a dev server from the container at `http://127.0.0.1:5173` |
+| `claude-ide-box profile python` | tools for this project (see [What runs in the box](#what-runs-in-the-box)) |
 | `claude-ide-box logs` | wrapper log and requests the proxy denied (`--all` for the full proxy log) |
 | `claude-ide-box allow example.org` | allow a domain (`.example.org` for subdomains too) |
 | `claude-ide-box up --recreate` | apply changed masks or settings now |
@@ -218,6 +222,99 @@ creates its container (a few seconds); later sessions reuse it.
 > When a new secret file (say `.env.local`) appears on the host, the next session recreates the
 > container so the file is masked. If a session is still running in the old container, the wrapper
 > refuses to start a new one and tells you to run `claude-ide-box up --recreate`.
+
+## What runs in the box
+
+Claude IDE Box is not tied to one language. The **base image** is a general Linux workstation for
+Claude, and **modules** add toolchains and network access only where a project needs them.
+
+| Stack | In the box | Proxy preset | Example |
+|---|---|---|---|
+| **JavaScript / TypeScript** - Node, React, Vue, Next, Angular, Svelte | base: Node 22, npm, yarn, pnpm (corepack), C/C++ toolchain for native modules | npm is allowed by default; `yarn` | `npm ci && npm test` |
+| **Python** - Django, FastAPI, data science | base: Python 3, venv, pip; profile `python` adds uv | `python` | `uv sync && pytest` |
+| **Go** | profile `go` | `go` | `go test ./...` |
+| **Rust** | profile `rust` (rustc, cargo, clippy, rustfmt) | `rust` | `cargo test` |
+| **Java / Kotlin** - Maven, Gradle | profile `java` (Temurin JDK 21, Maven; Gradle via `gradlew`) | `java` | `./mvnw verify` |
+| **PHP** - Laravel, Symfony, PrestaShop | profile `php` (PHP 8.3, composer, MariaDB client) | `php` | `composer install` |
+| **Documents** - Word, Excel, PowerPoint, OpenDocument, PDF, scans | profile `office` (LibreOffice headless, pandoc, PDF tools, OCR in Polish and English, python-docx, openpyxl) | none needed | `soffice --headless --convert-to pdf contract.docx` |
+| Anything else | your own profile (see [Modules](#modules)) | your own preset | |
+
+Profiles combine. A full-stack project with a Python backend and a React frontend uses:
+
+```bash
+claude-ide-box profile python
+```
+
+```bash
+claude-ide-box preset python on
+```
+
+and one with Go services and a Java build uses `claude-ide-box profile go java`. Run
+`claude-ide-box setup` in the project afterwards to build the combined image.
+
+### Dev servers (React, Vite, Next, Django, ...)
+
+The container has no published ports and no route out, so a dev server started by Claude
+(`npm run dev` on port 5173, say) is not reachable from your browser directly. Forward it:
+
+```bash
+claude-ide-box forward 5173
+```
+
+Then open `http://127.0.0.1:5173`. Every browser connection becomes one `docker exec` into the
+container - the same stdin/stdout channel the Claude session uses - so the container gains no
+network access. The listener binds to `127.0.0.1` only. The page itself is served by code running
+in the sandbox: treat it like any untrusted site.
+
+### Office documents
+
+The `office` profile works on the **files**; you keep using Word, Excel, PowerPoint or LibreOffice
+on your computer as usual, on the same files in the project folder.
+
+| Format | Claude can |
+|---|---|
+| Word `.docx`, Excel `.xlsx`, PowerPoint `.pptx` | read and edit in place (python-docx, openpyxl), convert, recalculate formulas (LibreOffice) |
+| OpenDocument `.odt`, `.ods`, `.odp` (LibreOffice, OpenOffice) | read, edit and convert (LibreOffice) |
+| PDF, scans | extract text, merge and split (poppler, qpdf), OCR (tesseract `pol`, `eng`) |
+
+Microsoft Office itself cannot run in a Linux container and does not need to. Complex features -
+tracked changes, pivot tables, charts - survive best when Claude edits a `.docx`/`.xlsx` in place
+rather than converting it back and forth. Macros (`.docm`, `.xlsm`) are never run in the box.
+
+> [!NOTE]
+> **Not a developer?** Lawyers, HR, marketing and other document-heavy work benefit from the same
+> isolation. [docs/NON-DEVELOPERS.md](docs/NON-DEVELOPERS.md) describes how to use Claude IDE Box
+> for document work today and the plan for Claude Desktop users.
+
+## Modules
+
+There are two kinds of modules, and both can be your own:
+
+| | Shipped in | Your own (kept across updates) | Commands |
+|---|---|---|---|
+| **Profile** - tools in the image | `image/profiles/<name>/Dockerfile` | `~/.config/claude-ide-box/profiles/<name>/Dockerfile` | `profiles`, `profile NAME...`, `setup` |
+| **Proxy preset** - allowed domains | `proxy/presets/<name>.txt` | `~/.config/claude-ide-box/presets/<name>.txt` | `presets`, `preset NAME on\|off` |
+
+A profile is a Dockerfile layered on whatever comes before it:
+
+```dockerfile
+# Ruby 3 with bundler            <- first comment line: shown by `claude-ide-box profiles`
+ARG BASE_IMAGE=claude-ide-box/base:latest
+FROM ${BASE_IMAGE}
+USER root
+ENV HOME=/root
+RUN apt-get update && apt-get install -y --no-install-recommends ruby-full \
+ && rm -rf /var/lib/apt/lists/*
+ENV HOME=/home/claude
+USER claude
+```
+
+Root steps run with `HOME=/root`: the image's `/home/claude` becomes every project's home volume,
+and `setup` refuses a profile that leaves files there that the `claude` user does not own.
+
+A preset is a list of domains, one per line (`.example.com` also matches subdomains), with a first
+comment line as its description. Every domain you add is a way for data to leave the box; keep the
+list short.
 
 ## Network allowlist
 
@@ -230,15 +327,20 @@ The default list ([`proxy/allowlist.txt`](proxy/allowlist.txt)) follows the
 | `claude.ai`, `claude.com`, `platform.claude.com` | subscription authentication and token refresh |
 | `registry.npmjs.org` | plugins and `npx`-launched MCP servers |
 
-Presets, off by default:
+Presets, off by default (`claude-ide-box presets` shows them and their state):
 
-| Preset | Adds | Note |
+| Preset | Adds | For |
 |---|---|---|
+| `python` | `pypi.org`, `files.pythonhosted.org` | pip, uv, poetry |
+| `go` | `proxy.golang.org`, `sum.golang.org` | Go modules |
+| `rust` | `crates.io`, `index.crates.io`, `static.crates.io` | cargo |
+| `java` | Maven Central, Gradle wrapper and plugin portal | Maven, Gradle |
 | `php` | `packagist.org`, `repo.packagist.org`, `getcomposer.org` | composer |
-| `github` | `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com` | **exfiltration channel** - composer often needs it for dist downloads |
+| `yarn` | `registry.yarnpkg.com`, `repo.yarnpkg.com` | yarn |
+| `github` | `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com` | **exfiltration channel** - needed by some composer, go and uv downloads |
 
 ```bash
-claude-ide-box preset php on
+claude-ide-box preset python on
 ```
 
 By default the container also sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` (no telemetry or
@@ -255,7 +357,7 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 |---|---|---|
 | `SUBNET` / `PROXY_IP` | `172.30.99.0/24` / `172.30.99.2` | change if it collides with your LAN or VPN |
 | `CLAUDE_CODE_VERSION` | `2.1.318` | pinned Claude Code version |
-| `PROFILE` * | `base` | image profile, e.g. `php` |
+| `PROFILE` * | `base` | image profiles, e.g. `python java` (or use `claude-ide-box profile`) |
 | `MASK` * | | extra mask patterns; a name (`secrets.json`) matches at any depth, a path (`config/db.yml`) is anchored at the project root |
 | `MASK_PRESETS` * | | `prestashop` |
 | `READONLY` * | | extra read-only paths, e.g. `.husky .envrc` |
@@ -263,20 +365,12 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `MEMORY` / `CPUS` / `PIDS_LIMIT` * | `4g` / `2` / `512` | container limits |
 | `NONESSENTIAL_TRAFFIC` * | `0` | `1` allows telemetry and error reporting |
 | `CLAUDEAI_CONNECTORS` * | `0` | `1` exposes claude.ai connectors (needs `mcp-proxy.anthropic.com` allowed) |
-| `PROXY_PRESETS` | | `php github` |
+| `PROXY_PRESETS` | | e.g. `python go` (or use `claude-ide-box preset`) |
 | `UPSTREAM_PROXY` | | `host:port` of a corporate proxy squid should forward to |
 | `AUTO_GUARD` | `1` | re-run `guard` on every wrapper start |
 
 \* can be overridden per project. The full list is in [`lib/claude-ide-box/common.sh`](lib/claude-ide-box/common.sh)
 (`cb_config_defaults`).
-
-### Language profiles
-
-`claude-ide-box setup --profile php` builds `claude-ide-box/php` on top of the base image: PHP 8.3 CLI
-with intl, zip, gd, mysqli, pdo_mysql, mbstring, xml and curl, composer, and the MariaDB client -
-enough for PrestaShop. Select it per project with `PROFILE=php`. To add a profile, create
-`image/profiles/<name>/Dockerfile` that starts `FROM ${BASE_IMAGE}`, installs as root and ends with
-`USER claude`.
 
 ## Updating Claude Code
 
@@ -319,6 +413,7 @@ remove the config, the Docker containers, volumes and networks, which it leaves 
 
 - [`docs/DESIGN.md`](docs/DESIGN.md) - design specification
 - [`docs/PLATFORM-NOTES.md`](docs/PLATFORM-NOTES.md) - facts measured on real hosts and in the extension
+- [`docs/NON-DEVELOPERS.md`](docs/NON-DEVELOPERS.md) - document work and the roadmap for Claude Desktop users
 - [`TESTING.md`](TESTING.md) - what is verified automatically and what needs a manual check
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - conventions (bash 3.2, fail closed, security invariants)
 - [`SECURITY.md`](SECURITY.md) - reporting a sandbox escape
