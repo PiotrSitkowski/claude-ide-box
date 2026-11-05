@@ -115,6 +115,7 @@ ok "setup builds images and starts the proxy"
 printf 'SECRET=hunter2\n' >"$PROJECT/.env"
 mkdir -p "$PROJECT/.env.d" "$PROJECT/.git/hooks" "$PROJECT/.vscode"
 printf 'TOKEN=abc\n' >"$PROJECT/.env.d/prod"
+printf 'SECRET=\n' >"$PROJECT/.env.example"
 printf '[core]\n\tbare = false\n' >"$PROJECT/.git/config"
 printf '{}\n' >"$PROJECT/.vscode/settings.json"
 
@@ -198,6 +199,8 @@ v="$(in_box "ls -A .env.d" 2>&1 || true)"
 [ -z "$v" ] && ok ".env.d/ is an empty tmpfs inside the container" || not_ok ".env.d/ is empty" "$v"
 in_box "echo leak >> .env" >/dev/null 2>&1 && not_ok ".env is read-only" || ok ".env is read-only"
 [ "$(cat "$PROJECT/.env")" = "SECRET=hunter2" ] && ok "host .env is untouched" || not_ok "host .env is untouched"
+v="$(in_box "cat .env.example" 2>&1 || true)"
+[ "$v" = "SECRET=" ] && ok ".env.example (a template) stays readable" || not_ok ".env.example (a template) stays readable" "$v"
 
 # ---------------------------------------------------------------------------
 echo "== (d) read-only host-tool directories"
