@@ -245,7 +245,12 @@ cb_build() {
 # instead of failing (LibreOffice does). Refuse such an image.
 cb_check_profile_home() {
   local foreign
-  foreign="$(cb_docker run --rm --user 0 --entrypoint find "$1" /home/claude \
+  local -a opts
+  opts=()
+  local o
+  for o in $(cb_engine_run_opts) $(cb_engine_user_opts); do opts+=("$o"); done
+  # --userns=keep-id would make "claude" a different UID than in the image.
+  foreign="$(cb_docker run --rm ${opts[@]+"${opts[@]}"} --user 0 --entrypoint find "$1" /home/claude \
     ! -user claude -print 2>/dev/null | head -n 5)" || true
   if [ -n "$foreign" ]; then
     cb_die "profile '$2' leaves files in /home/claude that do not belong to the claude user: $(printf '%s' "$foreign" | tr '\n' ' ')- run root commands in its Dockerfile with HOME=/root"
@@ -300,6 +305,7 @@ cmd_setup() {
   cb_load_config
   cb_find_docker
   cb_require_docker
+  cb_require_engine
   cb_engine_enforce setup
   combos="$combos $CFG_BUILD_PROFILES $(printf '%s' "$CFG_PROFILE" | tr ' ' ',')"
   for c in $combos; do
@@ -320,20 +326,27 @@ cmd_setup() {
   done
   cb_build "$CB_PROXY_IMAGE" "$CB_ROOT/proxy" --build-arg "BASE_IMAGE=$CFG_PROXY_BASE_IMAGE"
 
-  # Networks. The internal network has no route out; inhibit_ipv4 keeps the
-  # host from getting an address on its bridge, so containers cannot reach
-  # services listening on the host either.
+  # Networks. The internal network has no route out, and the host gets no
+  # address on its bridge, so containers cannot reach services listening on
+  # the host either: Docker's inhibit_ipv4 option, or on Podman an internal
+  # network without DNS (netavark gives the bridge an address only to serve
+  # DNS on it; with DNS, Podman would also ignore --dns 127.0.0.1).
+  local -a isolate
+  if [ "$CB_ENGINE" = podman ]; then
+    isolate=(--disable-dns)
+  else
+    isolate=(--opt com.docker.network.bridge.inhibit_ipv4=true)
+  fi
   if ! cb_docker network inspect "$CB_NETWORK_INTERNAL" >/dev/null 2>&1; then
     say "creating network $CB_NETWORK_INTERNAL ($CFG_SUBNET)"
-    cb_docker network create --driver bridge --internal --subnet "$CFG_SUBNET" \
-      --opt com.docker.network.bridge.inhibit_ipv4=true \
+    cb_docker network create --driver bridge --internal "${isolate[@]}" --subnet "$CFG_SUBNET" \
       --label io.claude-ide-box.managed=1 "$CB_NETWORK_INTERNAL" >/dev/null ||
       cb_die "cannot create network $CB_NETWORK_INTERNAL (does $CFG_SUBNET collide with another network? set SUBNET and PROXY_IP in $CB_CONFIG_FILE)"
   else
     local info
     info="$(cb_internal_network_info)"
     case "$info" in
-      "true "*"$CFG_SUBNET") ;;
+      "true true $CFG_SUBNET") ;;
       *) cb_warn "network $CB_NETWORK_INTERNAL exists but does not match the configuration ($info); remove it with 'docker network rm $CB_NETWORK_INTERNAL' after removing the containers using it, then run setup again" ;;
     esac
   fi
@@ -347,7 +360,11 @@ cmd_setup() {
 
   say "starting $CB_PROXY_NAME at $CFG_PROXY_IP"
   cb_docker rm -f "$CB_PROXY_NAME" >/dev/null 2>&1 || true
-  cb_docker run -d --name "$CB_PROXY_NAME" \
+  local -a popts
+  local o
+  popts=()
+  for o in $(cb_engine_run_opts); do popts+=("$o"); done
+  cb_docker run -d --name "$CB_PROXY_NAME" ${popts[@]+"${popts[@]}"} \
     --label io.claude-ide-box.managed=1 \
     --restart unless-stopped \
     --network "$CB_NETWORK_EGRESS" \
@@ -435,6 +452,7 @@ cmd_login() {
   cb_load_config
   cb_find_docker
   cb_require_docker
+  cb_require_engine
   cb_engine_enforce
   cb_docker image inspect "$(cb_image_for_profile base)" >/dev/null 2>&1 || cb_die "run 'claude-ide-box setup' first"
   cb_container_uid
@@ -451,6 +469,10 @@ cmd_login() {
   esac
   chmod 700 "$capture"
   filter="$(cat "$CB_LIB/login-filter.js")" || { rm -rf "$capture"; cb_die "missing $CB_LIB/login-filter.js"; }
+  local -a eopts
+  eopts=()
+  local o
+  for o in $(cb_engine_run_opts) $(cb_engine_user_opts); do eopts+=("$o"); done
   say "Starting 'claude setup-token' in a temporary container behind the proxy."
   say "Open the URL it prints in your browser, sign in, and paste the code back."
   say "The token is captured directly; it is not shown and you do not need to copy it."
@@ -461,7 +483,7 @@ cmd_login() {
   fi
   say ""
   # shellcheck disable=SC2016 # $1 is expanded by the container's bash
-  cb_docker run -it --rm \
+  cb_docker run -it --rm ${eopts[@]+"${eopts[@]}"} \
     --network "$CB_NETWORK_INTERNAL" --dns 127.0.0.1 \
     --cap-drop ALL --security-opt no-new-privileges --read-only \
     --tmpfs /tmp:rw,size=64m --tmpfs "/home/claude:rw,size=64m,uid=$CB_UID,gid=$CB_GID" \
@@ -577,7 +599,10 @@ cmd_status() {
   else
     say "docker:    $(cb_docker version --format '{{.Server.Version}}' 2>/dev/null)"
     say "proxy:     $(cb_docker inspect --format '{{.State.Status}}' "$CB_PROXY_NAME" 2>/dev/null || echo missing)"
-    say "network:   $(cb_docker network inspect --format '{{.Internal}} {{range .IPAM.Config}}{{.Subnet}}{{end}}' "$CB_NETWORK_INTERNAL" 2>/dev/null | sed 's/^true/internal/' || echo missing)"
+    say "engine:    $CB_ENGINE"
+    local ninfo
+    ninfo="$(cb_internal_network_info)"
+    say "network:   $(printf '%s' "${ninfo:-missing}" | awk 'NF == 3 { print ($1 == "true" ? "internal" : "NOT internal"), $3; next } { print }')"
   fi
   if (cb_set_project "${PWD:-$(pwd)}") 2>/dev/null; then
     project_from_pwd
@@ -1067,7 +1092,17 @@ cmd_doctor() {
     if ! cb_docker_ready; then
       check_fail "Docker daemon is not reachable (is Docker Desktop running? context: ${DOCKER_CONTEXT:-$(cb_docker context show 2>/dev/null || echo default)})"
     else
-      check_ok "Docker daemon $(cb_docker version --format '{{.Server.Version}}' 2>/dev/null)"
+      if [ "$CB_ENGINE" = podman ]; then
+        check_ok "Podman $(cb_docker version --format '{{.Server.Version}}' 2>/dev/null)"
+      else
+        check_ok "Docker daemon $(cb_docker version --format '{{.Server.Version}}' 2>/dev/null)"
+      fi
+      cb_engine_facts
+      if [ -n "$CB_ENGINE_PROBLEM" ]; then
+        check_fail "$CB_ENGINE_PROBLEM"
+      elif [ "$CB_ROOTLESS" = 1 ]; then
+        check_ok "rootless $CB_ENGINE with enforced cpu, memory and pids limits"
+      fi
       doctor_engine
       for image in "$(cb_image_for_profile base)" "$CB_PROXY_IMAGE"; do
         if cb_docker image inspect --format '{{.Id}}' "$image" >/dev/null 2>&1; then
@@ -1080,9 +1115,10 @@ cmd_doctor() {
       case "$info" in
         "") check_fail "network $CB_NETWORK_INTERNAL missing (claude-ide-box setup)" ;;
         "true "*)
-          check_ok "network $CB_NETWORK_INTERNAL is internal ($info)"
-          case "$info" in
-            *inhibit_ipv4:true*) ;;
+          check_ok "network $CB_NETWORK_INTERNAL is internal (${info##* })"
+          case "$info:$CB_ENGINE" in
+            "true true "*) ;;
+            *:podman) check_fail "network $CB_NETWORK_INTERNAL has DNS enabled: Podman then gives the host an address containers can reach and ignores --dns 127.0.0.1; remove the containers using it and the network, then run 'claude-ide-box setup'" ;;
             *) check_warn "network $CB_NETWORK_INTERNAL lets containers reach the host via its bridge address; recreate it with 'claude-ide-box setup'" ;;
           esac
           ;;
@@ -1210,7 +1246,9 @@ qs_check_install() {
   if ! cb_docker_ready; then
     qs_stop "the Docker daemon is not reachable - start Docker (Desktop) and try again"
   fi
-  check_ok "Docker daemon $(cb_docker version --format '{{.Server.Version}}' 2>/dev/null)"
+  check_ok "$CB_ENGINE $(cb_docker version --format '{{.Server.Version}}' 2>/dev/null)"
+  cb_engine_facts
+  [ -z "$CB_ENGINE_PROBLEM" ] || qs_stop "$CB_ENGINE_PROBLEM"
   if command -v git >/dev/null 2>&1; then
     check_ok "git: $(command -v git)"
   else

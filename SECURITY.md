@@ -70,6 +70,15 @@ These are documented trade-offs, not vulnerabilities. Proposals to close them ar
   is writable until the next start (then it is mounted read-only). The host only runs git in it if
   the IDE auto-detects sub-repositories, hence `"git.autoRepositoryDetection": false` in the
   recommended settings; `doctor` warns without it.
+- **Container engines.** The guarantees above are verified on rootful Docker and rootful Podman
+  (netavark). Rootless Docker is refused: under it only container root maps to the host user, so the
+  container user could write the project only as root, and on cgroup v1 it ignores memory, CPU and
+  pids limits without an error. Rootless Podman is supported only where it enforces those limits
+  (cgroup v2 with delegated controllers); on cgroup v1 it is refused. Podman needs three changes
+  to match Docker's isolation - a DNS-less internal network (otherwise the host has an address on
+  the bridge and `--dns 127.0.0.1` is ignored), `notmpcopyup` on masked directories (otherwise
+  Podman copies the masked content into the tmpfs that hides it) and `--http-proxy=false` - and
+  claude-ide-box applies them. A configuration that silently loses one of them is in scope.
 - **guard depends on the extension layout.** A new extension version is unguarded until the next
   wrapper start or `claude-ide-box guard`; `doctor` reports it.
 - **Session history is not visible in the IDE panel.** The extension lists past conversations from

@@ -7,8 +7,8 @@
 # php:8.3-cli-bookworm image (same Debian release, same ABI) and only its
 # runtime libraries are installed from Debian.
 ARG BASE_IMAGE=claude-ide-box/base:latest
-ARG PHP_IMAGE=php:8.3-cli-bookworm
-ARG COMPOSER_IMAGE=composer:2
+ARG PHP_IMAGE=docker.io/library/php:8.3-cli-bookworm
+ARG COMPOSER_IMAGE=docker.io/library/composer:2
 
 FROM ${PHP_IMAGE} AS php-build
 RUN apt-get update \

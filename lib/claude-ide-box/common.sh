@@ -314,8 +314,9 @@ cb_config_defaults() {
   CFG_PROFILE="base"
   CFG_BUILD_PROFILES=""
   CFG_CLAUDE_CODE_VERSION="2.1.318"
-  CFG_BASE_IMAGE="node:22-bookworm-slim"
-  CFG_PROXY_BASE_IMAGE="debian:bookworm-slim"
+  # Fully qualified: Podman does not resolve short names without a TTY.
+  CFG_BASE_IMAGE="docker.io/library/node:22-bookworm-slim"
+  CFG_PROXY_BASE_IMAGE="docker.io/library/debian:bookworm-slim"
   CFG_BUILD_NETWORK=""
   CFG_MEMORY="4g"
   CFG_CPUS="2"
@@ -608,18 +609,26 @@ cb_set_project() {
 # --------------------------------------------------------------------------
 
 # The IDE's environment on macOS is the GUI launch environment, whose PATH may
-# lack /usr/local/bin or /opt/homebrew/bin.
+# lack /usr/local/bin or /opt/homebrew/bin. Podman is used when it is the only
+# engine installed, or when CLAUDE_IDE_BOX_DOCKER names it.
 cb_find_docker() {
   local c
+  CB_DOCKER=""
   if [ -n "${CLAUDE_IDE_BOX_DOCKER:-}" ]; then
-    CB_DOCKER="$CLAUDE_IDE_BOX_DOCKER"
+    case "$CLAUDE_IDE_BOX_DOCKER" in
+      */*) CB_DOCKER="$CLAUDE_IDE_BOX_DOCKER" ;;
+      *) CB_DOCKER="$(command -v "$CLAUDE_IDE_BOX_DOCKER" 2>/dev/null || true)" ;;
+    esac
+    [ -n "$CB_DOCKER" ] || cb_die "CLAUDE_IDE_BOX_DOCKER='$CLAUDE_IDE_BOX_DOCKER' was not found"
   elif c="$(command -v docker 2>/dev/null)" && [ -n "$c" ]; then
     CB_DOCKER="$c"
+  elif c="$(command -v podman 2>/dev/null)" && [ -n "$c" ]; then
+    CB_DOCKER="$c"
   else
-    CB_DOCKER=""
     for c in /usr/local/bin/docker /opt/homebrew/bin/docker "$HOME/.docker/bin/docker" \
       /Applications/Docker.app/Contents/Resources/bin/docker /usr/bin/docker \
-      /opt/local/bin/docker /snap/bin/docker; do
+      /opt/local/bin/docker /snap/bin/docker \
+      /opt/podman/bin/podman /opt/homebrew/bin/podman /usr/local/bin/podman /usr/bin/podman; do
       if [ -x "$c" ]; then
         CB_DOCKER="$c"
         break
@@ -634,7 +643,98 @@ cb_find_docker() {
     *":$(cb_dirname "$CB_DOCKER"):"*) ;;
     *) PATH="$(cb_dirname "$CB_DOCKER"):$PATH"; export PATH ;;
   esac
-  cb_log "docker: $CB_DOCKER (DOCKER_HOST=${DOCKER_HOST:-unset}, DOCKER_CONTEXT=${DOCKER_CONTEXT:-unset})"
+  # The podman-docker package installs a `docker` that is Podman.
+  case "$("$CB_DOCKER" --version 2>/dev/null || true)" in
+    *[Pp]odman*) CB_ENGINE=podman ;;
+    *) CB_ENGINE=docker ;;
+  esac
+  CB_ROOTLESS=""
+  cb_log "docker: $CB_DOCKER ($CB_ENGINE, DOCKER_HOST=${DOCKER_HOST:-unset}, DOCKER_CONTEXT=${DOCKER_CONTEXT:-unset})"
+}
+
+# Engine facts that need the daemon, read once: CB_ROOTLESS (0/1) and
+# CB_ENGINE_PROBLEM (empty, or why this engine cannot give the same
+# guarantees as rootful Docker).
+cb_engine_facts() {
+  [ -z "$CB_ROOTLESS" ] || return 0
+  local info backend rootless cgroups controllers c
+  CB_ROOTLESS=0
+  CB_ENGINE_PROBLEM=""
+  if [ "$CB_ENGINE" = podman ]; then
+    info="$(cb_docker info --format '{{.Host.NetworkBackend}} {{.Host.Security.Rootless}} {{.Host.CgroupsVersion}} {{json .Host.CgroupControllers}}' 2>/dev/null)" ||
+      { CB_ENGINE_PROBLEM="cannot read 'podman info'"; return 0; }
+    read -r backend rootless cgroups controllers <<EOF
+$info
+EOF
+    [ "$rootless" != true ] || CB_ROOTLESS=1
+    if [ "$backend" != netavark ]; then
+      # CNI gives internal networks a gateway address on the host.
+      CB_ENGINE_PROBLEM="Podman uses the '$backend' network backend; claude-ide-box needs netavark (Podman 4 or newer, network_backend=\"netavark\" in containers.conf), whose DNS-less internal networks give the host no address the container could reach"
+      return 0
+    fi
+    if [ "$CB_ROOTLESS" = 1 ] && [ "$cgroups" != v2 ]; then
+      CB_ENGINE_PROBLEM="rootless Podman on cgroup $cgroups ignores --memory, --cpus and --pids-limit (it only prints a warning); use cgroup v2 with delegated cpu, memory and pids controllers, or rootful Podman"
+      return 0
+    fi
+    for c in cpu memory pids; do
+      case "$controllers" in
+        *"\"$c\""*) ;;
+        *)
+          CB_ENGINE_PROBLEM="Podman cannot enforce the container limits: the '$c' cgroup controller is not available to it (available: $controllers); on a rootless cgroup v2 host, delegate it to your user (systemd: Delegate=cpu memory pids)"
+          return 0
+          ;;
+      esac
+    done
+    return 0
+  fi
+  info="$(cb_docker info --format '{{.MemoryLimit}} {{.PidsLimit}} {{.CPUCfsQuota}} {{json .SecurityOptions}}' 2>/dev/null)" ||
+    { CB_ENGINE_PROBLEM="cannot read 'docker info'"; return 0; }
+  case "$info" in
+    *name=rootless*)
+      CB_ROOTLESS=1
+      # Under rootless Docker only container root maps to the host user, so
+      # the non-root container user could not write the project; making it
+      # root would drop the non-root guarantee. Rootless Podman maps the host
+      # user itself (--userns=keep-id).
+      CB_ENGINE_PROBLEM="rootless Docker is not supported: the container user cannot own project files without running as root in the container. Use rootful Docker, or rootless Podman (CLAUDE_IDE_BOX_DOCKER=podman), which keeps the user non-root and maps it to you"
+      return 0
+      ;;
+  esac
+  case "$info" in
+    "true true true "*) ;;
+    *) CB_ENGINE_PROBLEM="this Docker engine does not enforce the container limits (memory, pids, CPU quota: $(printf '%s' "$info" | cut -d' ' -f1-3)); claude-ide-box needs them (cgroup v2, or cgroup v1 with a rootful daemon)" ;;
+  esac
+}
+
+# Fail closed on an engine that cannot provide the sandbox's guarantees.
+cb_require_engine() {
+  cb_engine_facts
+  [ -z "$CB_ENGINE_PROBLEM" ] || cb_die "$CB_ENGINE_PROBLEM. Nothing was started."
+}
+
+# Options every `run` needs on this engine to match Docker, one per line.
+cb_engine_run_opts() {
+  if [ "$CB_ENGINE" = podman ]; then
+    # Podman adds writable tmpfs on /run and /var/tmp to --read-only
+    # containers, and without them leaves /dev/shm read-only; Docker has a
+    # writable /dev/shm only (squid and Chromium need it).
+    printf '%s\n' --read-only-tmpfs=false --tmpfs /dev/shm:rw,nosuid,nodev,noexec,size=64m
+    # Podman copies the host's *_proxy variables into containers by default;
+    # nothing from the host environment crosses unless claude-ide-box sets it.
+    printf '%s\n' --http-proxy=false
+  fi
+  return 0
+}
+
+# Options for containers that run as the image's "claude" user, one per line.
+cb_engine_user_opts() {
+  if [ "$CB_ENGINE" = podman ]; then
+    cb_engine_facts
+    # Rootless Podman maps container UIDs to subordinate IDs; keep-id maps
+    # the host user to the same UID, which the image's user already has.
+    [ "$CB_ROOTLESS" != 1 ] || printf '%s\n' --userns=keep-id
+  fi
+  return 0
 }
 
 cb_docker() {
@@ -656,10 +756,26 @@ cb_require_network() {
     cb_die "network $CB_NETWORK_INTERNAL not found - run 'claude-ide-box setup'"
 }
 
-# Print "<internal> <options> <subnet>" of the internal network, or nothing.
+# Print "<internal> <host-isolated> <subnet>" of the internal network, or
+# nothing. host-isolated means the host has no address on the network's
+# bridge: Docker's inhibit_ipv4 option, or Podman's DNS-less internal network
+# (netavark only gives the bridge an address to serve DNS on it).
 cb_internal_network_info() {
-  cb_docker network inspect --format '{{.Internal}} {{.Options}} {{range .IPAM.Config}}{{.Subnet}}{{end}}' \
-    "$CB_NETWORK_INTERNAL" 2>/dev/null || true
+  local internal opts subnet iso=false
+  if [ "$CB_ENGINE" = podman ]; then
+    read -r internal opts subnet <<EOF
+$(cb_docker network inspect --format '{{.Internal}} {{.DNSEnabled}} {{range .Subnets}}{{.Subnet}}{{end}}' "$CB_NETWORK_INTERNAL" 2>/dev/null || true)
+EOF
+    [ "$opts" != false ] || iso=true
+  else
+    local line
+    line="$(cb_docker network inspect --format '{{.Internal}} {{.Options}} {{range .IPAM.Config}}{{.Subnet}}{{end}}' "$CB_NETWORK_INTERNAL" 2>/dev/null || true)"
+    internal="${line%% *}"
+    subnet="${line##* }"
+    case "$line" in *inhibit_ipv4:true*) iso=true ;; esac
+  fi
+  [ -n "${internal:-}" ] || return 0
+  printf '%s %s %s\n' "$internal" "$iso" "$subnet"
 }
 
 cb_proxy_running() {
@@ -1041,7 +1157,11 @@ cb_container_uid() {
 
 cb_cpus() {
   local want="$CFG_CPUS" have
-  have="$(cb_docker info --format '{{.NCPU}}' 2>/dev/null || echo 1)"
+  if [ "$CB_ENGINE" = podman ]; then
+    have="$(cb_docker info --format '{{.Host.CPUs}}' 2>/dev/null || echo 1)"
+  else
+    have="$(cb_docker info --format '{{.NCPU}}' 2>/dev/null || echo 1)"
+  fi
   case "$have" in *[!0-9]* | "") have=1 ;; esac
   # docker refuses --cpus above the number of CPUs it sees
   if awk -v w="$want" -v h="$have" 'BEGIN { exit !(w > h) }'; then
@@ -1056,6 +1176,9 @@ cb_cpus() {
 # value and is clamped only when the container is created.
 cb_build_run_args() {
   local kind path
+  # Podman's run options depend on rootless mode; read it here, not in the
+  # subshell below. Docker needs no extra query on this hot path.
+  [ "$CB_ENGINE" != podman ] || cb_engine_facts
   cb_container_uid
   CB_MOUNTS="$(cb_compute_mounts "$CB_PROJECT_DIR")" || exit 1
 
@@ -1087,12 +1210,18 @@ cb_build_run_args() {
     --mount "type=volume,src=$CB_VOLUME,dst=/home/claude"
     --mount "type=bind,src=$CB_PROJECT_DIR,dst=$CB_PROJECT_DIR"
   )
+  local o
+  for o in $(cb_engine_run_opts) $(cb_engine_user_opts); do
+    CB_RUN_ARGS+=("$o")
+  done
   if [ "$CFG_NONESSENTIAL_TRAFFIC" = "0" ]; then
     CB_RUN_ARGS+=(--env "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
   fi
   if [ "$CFG_CLAUDEAI_CONNECTORS" = "0" ]; then
     CB_RUN_ARGS+=(--env "ENABLE_CLAUDEAI_MCP_SERVERS=false")
   fi
+  local tmpfs_opts=""
+  [ "$CB_ENGINE" != podman ] || tmpfs_opts=",notmpcopyup"
   while IFS="$CB_TAB" read -r kind path; do
     [ -n "$kind" ] || continue
     case "$path" in
@@ -1102,7 +1231,10 @@ cb_build_run_args() {
     case "$kind" in
       bad) cb_die "'$path' cannot be mounted safely (its name contains a comma, quote, tab or newline); rename or remove it" ;;
       file) CB_RUN_ARGS+=(--mount "type=bind,src=$CB_EMPTY_FILE,dst=$path,readonly") ;;
-      dir) CB_RUN_ARGS+=(--mount "type=tmpfs,dst=$path,tmpfs-size=1048576") ;;
+      # Podman copies the masked directory's content into the tmpfs
+      # (tmpcopyup) unless told not to; Docker never does and rejects the
+      # option.
+      dir) CB_RUN_ARGS+=(--mount "type=tmpfs,dst=$path,tmpfs-size=1048576$tmpfs_opts") ;;
       ro) CB_RUN_ARGS+=(--mount "type=bind,src=$path,dst=$path,readonly") ;;
     esac
   done <<EOF
@@ -1168,6 +1300,7 @@ cb_ensure_container() {
     fi
   fi
   if [ -z "$state" ]; then
+    cb_require_engine
     cb_require_network
     cb_check_mask_record
     local -a args

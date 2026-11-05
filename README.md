@@ -37,7 +37,7 @@ relying on it.
 
 - [How it works](#how-it-works)
 - [Threat model](#threat-model)
-- [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows](#windows) · [separate IDE profile](#try-it-first-in-a-separate-ide-profile)
+- [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows](#windows) · [separate IDE profile](#try-it-first-in-a-separate-ide-profile) · [Podman and rootless engines](#podman-and-rootless-engines)
 - [Daily use](#daily-use)
 - [What runs in the box](#what-runs-in-the-box) - [dev servers](#dev-servers-react-vite-next-django-) · [office documents](#office-documents) · [personal data](#personal-data-in-the-project)
 - [Modules](#modules)
@@ -364,6 +364,29 @@ Code into the box in one profile and leave the others as they are:
 When you are convinced: remove `AUTO_GUARD=0`, add the settings to your default profile (and other
 IDEs) and run `claude-ide-box guard && claude-ide-box doctor`.
 
+### Podman and rootless engines
+
+claude-ide-box drives Docker by default. Podman 4 or newer works as well; it is used when it is the
+only engine installed, or when you set `CLAUDE_IDE_BOX_DOCKER=podman` (in the environment the IDE
+starts with, and for the CLI). Every engine must give the same guarantees, so claude-ide-box checks
+the engine before it creates anything and refuses one that cannot, instead of starting a weaker
+sandbox:
+
+| Engine | Supported | What differs |
+|---|---|---|
+| Docker Engine (rootful), Docker Desktop | yes | the reference |
+| Podman, rootful (netavark) | yes | the internal network is created without DNS: netavark then gives the host no address on its bridge (Docker's `inhibit_ipv4`), and Podman honours `--dns 127.0.0.1` only on such a network. Containers get `--read-only-tmpfs=false` plus a tmpfs on `/dev/shm` (the same writable paths as Docker), `--http-proxy=false` (no proxy variables copied from the host), and masked directories are mounted with `notmpcopyup` - by default Podman copies what is under a tmpfs mount into it, which would put the masked secrets right back |
+| Podman, rootless | yes, on cgroup v2 with the `cpu`, `memory` and `pids` controllers delegated to your user | as rootful, plus `--userns=keep-id` so the container user is you and project files keep your ownership. On cgroup v1 Podman ignores `--memory`, `--cpus` and `--pids-limit` with only a warning: refused |
+| Podman with the CNI network backend | no | CNI gives internal networks a gateway address on the host |
+| Docker, rootless | no | only container root maps to your user, so the non-root container user cannot write the project; running it as root would drop the non-root guarantee. On cgroup v1 it also ignores the limits silently. Use rootless Podman instead |
+| Any Docker engine that reports `MemoryLimit`, `PidsLimit` or `CPUCfsQuota` as false | no | the limits would be ignored |
+
+`claude-ide-box doctor` names the engine and the reason for a refusal. If a host runs both Docker
+and rootful Podman, Docker's `FORWARD DROP` policy also drops traffic between containers on a
+Podman bridge (with `br_netfilter` loaded), so project containers cannot reach the proxy: that fails
+closed, and is fixed by an `ACCEPT` rule for the internal bridge in the `DOCKER-USER` chain or by
+not running both engines.
+
 ## Daily use
 
 Open a project folder in the IDE and use the Claude Code panel. The first message in a new project
@@ -585,6 +608,9 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `AUTO_GUARD` | `1` | re-run `guard` on every wrapper start |
 | `OCR_LANGUAGES` | `eng` | Tesseract languages of the `ocr` profile, e.g. `eng deu chi_sim`; global only (one image for all projects), `setup` rebuilds it |
 | `ALLOW_VULNERABLE_DOCKER` | `0` | `1` runs even on an engine with a known container escape (global only; `doctor` shows `[RISK]` and fails) |
+
+The environment variable `CLAUDE_IDE_BOX_DOCKER` selects the engine CLI (`docker`, `podman` or a
+full path); see [Podman and rootless engines](#podman-and-rootless-engines).
 
 \* can be overridden per project. The full list is in [`lib/claude-ide-box/common.sh`](lib/claude-ide-box/common.sh)
 (`cb_config_defaults`).

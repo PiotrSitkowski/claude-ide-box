@@ -17,6 +17,7 @@
 #   CLAUDE_IDE_BOX_IT_ALLOWED_URL       URL that must pass (default https://api.anthropic.com/)
 #   CLAUDE_IDE_BOX_IT_PROFILES          image profiles to build and test, e.g. "php python go rust java office"
 #   CLAUDE_IDE_BOX_IT_KEEP=1            keep containers, networks and volumes afterwards
+#   CLAUDE_IDE_BOX_DOCKER               engine CLI, e.g. podman (as for claude-ide-box itself)
 set -euo pipefail
 
 REPO_DIR="$(cd -P "$(dirname "$0")/../.." && pwd -P)"
@@ -41,7 +42,10 @@ not_ok() {
 }
 skip() { SKIP=$((SKIP + 1)); printf 'SKIP  %s (%s)\n' "$1" "$2"; }
 
-if ! command -v docker >/dev/null 2>&1 || ! docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
+DOCKER="${CLAUDE_IDE_BOX_DOCKER:-docker}"
+ENGINE=docker
+case "$("$DOCKER" --version 2>/dev/null || true)" in *[Pp]odman*) ENGINE=podman ;; esac
+if ! command -v "$DOCKER" >/dev/null 2>&1 || ! "$DOCKER" version --format '{{.Server.Version}}' >/dev/null 2>&1; then
   echo "======================================================================"
   echo " INTEGRATION TESTS SKIPPED: no reachable Docker daemon."
   echo " Nothing was verified. Run them on a machine with Docker."
@@ -67,14 +71,20 @@ WRAPPER="$REPO_DIR/bin/claude-ide-box-exec"
 PROJECT="$WORK/it project"
 PROJECT_B="$WORK/second"
 mkdir -p "$PROJECT" "$PROJECT_B"
+# As root (e.g. rootful Podman), the container user is UID 1000 (see setup);
+# give it the project directories as a root user's projects would need.
+as_project_owner() {
+  [ "$(id -u)" != 0 ] || chown 1000:1000 "$@"
+}
+as_project_owner "$PROJECT" "$PROJECT_B"
 
 HOST_LISTENER_PID=""
 cleanup() {
   [ -z "$HOST_LISTENER_PID" ] || kill "$HOST_LISTENER_PID" 2>/dev/null || true
   if [ "${CLAUDE_IDE_BOX_IT_KEEP:-0}" != "1" ]; then
-    docker ps -aq --filter "name=^cbit-" | xargs docker rm -f >/dev/null 2>&1 || true
-    docker volume ls -q --filter "name=^cbit-" | xargs docker volume rm >/dev/null 2>&1 || true
-    docker network rm cbit-internal cbit-egress >/dev/null 2>&1 || true
+    "$DOCKER" ps -aq --filter "name=^cbit-" | xargs "$DOCKER" rm -f >/dev/null 2>&1 || true
+    "$DOCKER" volume ls -q --filter "name=^cbit-" | xargs "$DOCKER" volume rm >/dev/null 2>&1 || true
+    "$DOCKER" network rm cbit-internal cbit-egress >/dev/null 2>&1 || true
     rm -rf "$WORK"
   else
     echo "kept: $WORK and cbit-* Docker objects"
@@ -91,13 +101,13 @@ trap cleanup EXIT
   [ -z "${CLAUDE_IDE_BOX_IT_UPSTREAM_PROXY:-}" ] || echo "UPSTREAM_PROXY=$CLAUDE_IDE_BOX_IT_UPSTREAM_PROXY"
 } >"$XDG_CONFIG_HOME/claude-ide-box/config"
 
-echo "== docker $(docker version --format '{{.Server.Version}}'), host $(uname -sm), uid $(id -u)"
+echo "== $ENGINE $("$DOCKER" version --format '{{.Server.Version}}'), host $(uname -sm), uid $(id -u)"
 echo "== config:"
 sed 's/^/   /' "$XDG_CONFIG_HOME/claude-ide-box/config"
 
 # Leftovers of an interrupted earlier run.
-docker ps -aq --filter "name=^cbit-" | xargs docker rm -f >/dev/null 2>&1 || true
-docker network rm cbit-internal cbit-egress >/dev/null 2>&1 || true
+"$DOCKER" ps -aq --filter "name=^cbit-" | xargs "$DOCKER" rm -f >/dev/null 2>&1 || true
+"$DOCKER" network rm cbit-internal cbit-egress >/dev/null 2>&1 || true
 
 echo "== claude-ide-box setup"
 setup_args=()
@@ -133,7 +143,7 @@ NAME="$(container_name "$PROJECT")"
 
 # in_box CMD - run a shell command in the project container (as its user).
 in_box() {
-  docker exec -w "$PROJECT" "$NAME" bash -c "$1"
+  "$DOCKER" exec -w "$PROJECT" "$NAME" bash -c "$1"
 }
 
 expected_uid="$(id -u)"
@@ -244,15 +254,31 @@ else
 fi
 in_box "touch /etc/pwned" >/dev/null 2>&1 && not_ok "root filesystem is read-only" || ok "root filesystem is read-only"
 in_box "command -v sudo" >/dev/null 2>&1 && not_ok "no sudo in the image" || ok "no sudo in the image"
-v="$(docker inspect --format '{{.HostConfig.PidsLimit}} {{.HostConfig.Memory}} {{.HostConfig.Init}}' "$NAME")"
+v="$("$DOCKER" inspect --format '{{.HostConfig.PidsLimit}} {{.HostConfig.Memory}} {{.HostConfig.Init}}' "$NAME")"
 case "$v" in
   "512 "*" true") ok "pids/memory limits and --init are set ($v)" ;;
   *) not_ok "pids/memory limits and --init are set" "$v" ;;
 esac
-if docker inspect --format '{{range .Mounts}}{{.Source}} {{end}}' "$NAME" | tr ' ' '\n' | grep -qx "$HOME"; then
+if "$DOCKER" inspect --format '{{range .Mounts}}{{.Source}} {{end}}' "$NAME" | tr ' ' '\n' | grep -qx "$HOME"; then
   not_ok "host home directory is not mounted"
 else
   ok "host home directory is not mounted"
+fi
+
+for d in /run /var/tmp; do
+  in_box "touch $d/claude-ide-box-probe" >/dev/null 2>&1 && not_ok "$d is not writable" || ok "$d is not writable"
+done
+in_box "touch /dev/shm/probe" >/dev/null 2>&1 && ok "/dev/shm is writable (as on Docker)" || not_ok "/dev/shm is writable"
+
+echo "== engine: $ENGINE"
+v="$(in_box "grep '^nameserver' /etc/resolv.conf" 2>&1 || true)"
+[ "$v" = "nameserver 127.0.0.1" ] && ok "the only resolver is 127.0.0.1" || not_ok "the only resolver is 127.0.0.1" "$v"
+if [ "$ENGINE" = podman ]; then
+  v="$("$DOCKER" network inspect --format '{{.Internal}} {{.DNSEnabled}}' cbit-internal 2>&1)"
+  [ "$v" = "true false" ] && ok "Podman internal network has no DNS (so no host address on its bridge)" ||
+    not_ok "Podman internal network has no DNS" "$v"
+  v="$("$DOCKER" info --format '{{.Host.Security.Rootless}}')"
+  printf '      rootless: %s\n' "$v"
 fi
 
 # ---------------------------------------------------------------------------
@@ -265,6 +291,15 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Gateway of the engine's default bridge network (docker0, or Podman's "podman").
+default_gateway() {
+  if [ "$ENGINE" = podman ]; then
+    "$DOCKER" network inspect podman --format '{{range .Subnets}}{{.Gateway}}{{end}}' 2>/dev/null
+  else
+    "$DOCKER" network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null
+  fi
+}
+
 echo "== extra: host services are unreachable from the internal network"
 port=$((20000 + RANDOM % 10000))
 if command -v python3 >/dev/null 2>&1; then
@@ -273,14 +308,14 @@ if command -v python3 >/dev/null 2>&1; then
   sleep 1
   # Positive control: from a container on the default bridge the listener is
   # reachable, so the checks below are not passing because nothing listens.
-  gw="$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)"
-  if docker run --rm --entrypoint bash "$(docker inspect --format '{{.Config.Image}}' "$NAME")" \
+  gw="$(default_gateway)"
+  if "$DOCKER" run --rm --entrypoint bash "$("$DOCKER" inspect --format '{{.Config.Image}}' "$NAME")" \
     -c "timeout 5 bash -c 'exec 3<>/dev/tcp/$gw/$port'" >/dev/null 2>&1; then
     ok "control: host listener is reachable from the default bridge ($gw:$port)"
   else
     skip "control: host listener reachable from the default bridge" "host firewall blocks it anyway"
   fi
-  for ip in "$PREFIX3.1" "$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)"; do
+  for ip in "$PREFIX3.1" "$gw"; do
     [ -n "$ip" ] || continue
     if in_box "timeout 5 bash -c 'exec 3<>/dev/tcp/$ip/$port'" >/dev/null 2>&1; then
       not_ok "host listener on $ip:$port is unreachable"
@@ -295,9 +330,9 @@ else
 fi
 
 echo "== extra: Claude Code reaches the API through the proxy without DNS"
-tunnels_before="$(docker logs cbit-proxy 2>/dev/null | grep -c 'TCP_TUNNEL.*CONNECT api.anthropic.com:443' || true)"
+tunnels_before="$("$DOCKER" logs cbit-proxy 2>/dev/null | grep -c 'TCP_TUNNEL.*CONNECT api.anthropic.com:443' || true)"
 out="$(cd "$PROJECT" && ANTHROPIC_API_KEY=sk-ant-api03-claude-ide-box-invalid-key "$WRAPPER" -p "say hi" 2>&1 </dev/null || true)"
-tunnels_after="$(docker logs cbit-proxy 2>/dev/null | grep -c 'TCP_TUNNEL.*CONNECT api.anthropic.com:443' || true)"
+tunnels_after="$("$DOCKER" logs cbit-proxy 2>/dev/null | grep -c 'TCP_TUNNEL.*CONNECT api.anthropic.com:443' || true)"
 if [ "$tunnels_after" -gt "$tunnels_before" ]; then
   ok "claude opened $((tunnels_after - tunnels_before)) tunnel(s) to api.anthropic.com:443 through squid"
 else
@@ -313,11 +348,11 @@ case "$out" in
 esac
 
 echo "== extra: proxy hardening"
-v="$(docker exec cbit-proxy sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')"
+v="$("$DOCKER" exec cbit-proxy sh -c 'grep CapEff /proc/1/status' | awk '{print $2}')"
 [ "$v" = "0000000000000000" ] && ok "squid runs without capabilities" || not_ok "squid runs without capabilities" "$v"
-v="$(docker exec cbit-proxy id -un)"
+v="$("$DOCKER" exec cbit-proxy id -un)"
 [ "$v" = proxy ] && ok "squid runs as the unprivileged proxy user" || not_ok "squid runs as proxy" "$v"
-v="$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' cbit-proxy)"
+v="$("$DOCKER" inspect --format '{{.HostConfig.ReadonlyRootfs}}' cbit-proxy)"
 [ "$v" = true ] && ok "proxy root filesystem is read-only" || not_ok "proxy root filesystem is read-only" "$v"
 logs="$(cd "$PROJECT" && "$CLI" logs 2>&1 || true)"
 case "$logs" in
@@ -350,7 +385,7 @@ case "$allow_out" in
 esac
 
 echo "== extra: forward a dev server to the host"
-docker exec -d -w /tmp "$NAME" python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null
+"$DOCKER" exec -d -w /tmp "$NAME" python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null
 fport=$((30000 + RANDOM % 20000))
 (cd "$PROJECT" && exec "$CLI" forward 8765 "$fport" >"$WORK/forward.log" 2>&1) &
 fwd_pid=$!
@@ -364,19 +399,19 @@ kill "$fwd_pid" 2>/dev/null || true
 wait "$fwd_pid" 2>/dev/null || true
 [ "$code" = 200 ] && ok "claude-ide-box forward serves a container dev server on 127.0.0.1" ||
   not_ok "claude-ide-box forward serves a container dev server on 127.0.0.1" "HTTP $code"$'\n'"$(cat "$WORK/forward.log")"
-v="$(docker port "$NAME" 2>/dev/null || true)"
+v="$("$DOCKER" port "$NAME" 2>/dev/null || true)"
 [ -z "$v" ] && ok "the container still publishes no ports" || not_ok "the container still publishes no ports" "$v"
 
 echo "== extra: per-project home volumes"
 in_box 'echo "project-a" > ~/.claude/marker' || true
 (cd "$PROJECT_B" && "$CLI" up >/dev/null 2>&1) || not_ok "second project container starts"
 NAME_B="$(container_name "$PROJECT_B")"
-if docker exec "$NAME_B" test -e /home/claude/.claude/marker 2>/dev/null; then
+if "$DOCKER" exec "$NAME_B" test -e /home/claude/.claude/marker 2>/dev/null; then
   not_ok "one project's ~/.claude is invisible to another"
 else
   ok "one project's ~/.claude is invisible to another"
 fi
-if docker exec "$NAME_B" test -e "$PROJECT/.env" 2>/dev/null; then
+if "$DOCKER" exec "$NAME_B" test -e "$PROJECT/.env" 2>/dev/null; then
   not_ok "another project's files are invisible"
 else
   ok "another project's files are invisible"
@@ -398,9 +433,9 @@ else
 fi
 evil="$PROJECT/q,src=$HOME,dst=/home/claude/leak"
 mkdir -p "$evil" && : >"$evil/.env"
-docker rm -f "$NAME" >/dev/null 2>&1 || true
+"$DOCKER" rm -f "$NAME" >/dev/null 2>&1 || true
 out="$(cd "$PROJECT" && "$WRAPPER" --version 2>&1)" && st=0 || st=$?
-if [ "$st" != 0 ] && ! docker inspect "$NAME" >/dev/null 2>&1; then
+if [ "$st" != 0 ] && ! "$DOCKER" inspect "$NAME" >/dev/null 2>&1; then
   ok "a file name with a comma cannot inject mount options (start refused)"
 else
   not_ok "a file name with a comma cannot inject mount options" "status $st: $out"
@@ -418,7 +453,7 @@ case "$v" in
 esac
 
 echo "== extra: fail closed"
-out="$(cd "$PROJECT" && DOCKER_HOST=unix:///nonexistent.sock "$WRAPPER" --version 2>/dev/null)" && st=0 || st=$?
+out="$(cd "$PROJECT" && DOCKER_HOST=unix:///nonexistent.sock CONTAINER_HOST=unix:///nonexistent.sock "$WRAPPER" --version 2>/dev/null)" && st=0 || st=$?
 if [ "$st" != 0 ] && [ -z "$out" ]; then
   ok "unreachable Docker daemon: non-zero exit, empty stdout"
 else
@@ -444,6 +479,7 @@ out="$(in_box "python3 -m venv /tmp/venv && /tmp/venv/bin/python -c 'import sys;
 profile_project() {
   PDIR="$WORK/profile-$1"
   mkdir -p "$PDIR" "$XDG_CONFIG_HOME/claude-ide-box/projects"
+  as_project_owner "$PDIR"
   PNAME="$(container_name "$PDIR")"
   printf 'PROFILE="%s"\n' "$2" >"$XDG_CONFIG_HOME/claude-ide-box/projects/$PNAME.conf"
   if (cd "$PDIR" && "$CLI" up) >"$WORK/up-$1.log" 2>&1; then
@@ -456,7 +492,7 @@ profile_project() {
 
 # in_profile CMD - run CMD in the current profile project's container.
 in_profile() {
-  docker exec -w "$PDIR" "$PNAME" bash -c "$1"
+  "$DOCKER" exec -w "$PDIR" "$PNAME" bash -c "$1"
 }
 
 # check_with_preset PRESET DESCRIPTION EXPECTED CMD
@@ -538,6 +574,7 @@ if cb_it_has_profile go && cb_it_has_profile python; then
   echo "== combined profiles"
   # The user's flow: choose the profiles, build them with setup, start.
   mkdir -p "$WORK/profile-combo"
+  as_project_owner "$WORK/profile-combo"
   if ! (cd "$WORK/profile-combo" && "$CLI" profile python go && "$CLI" setup) >"$WORK/combo-setup.log" 2>&1; then
     not_ok "profiles combine: 'profile python go' + setup builds the chain" "$(tail -n 15 "$WORK/combo-setup.log")"
   elif profile_project combo "python go"; then
