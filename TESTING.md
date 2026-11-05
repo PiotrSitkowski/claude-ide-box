@@ -36,7 +36,7 @@ dependency to install on every runner for no extra coverage.
 |---|---|
 | Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 108 passed, 0 failed |
 | `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 108 passed, 0 failed |
-| CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | see the CI badge / pull request checks |
+| CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 108 passed, 0 failed in each (run 8, commit `ce4c436`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
 commit as the code, but were run red before the implementation existed (35 of 39 wrapper tests and
@@ -86,8 +86,11 @@ all through regular configuration keys rather than test-only code paths:
 The php profile was **not** built there: it needs `php:8.3-cli-bookworm` plus Debian packages,
 and Debian mirrors are unreachable from that sandbox.
 
-**CI (ubuntu-latest)** runs the same suite with the real Debian-based images, direct egress and the
-php profile. See the pull request checks for its result.
+**CI (ubuntu-latest) - 58 passed, 0 failed, 0 skipped** (run 8, commit `ce4c436`): the same suite
+with the real Debian-based images, direct egress and the php profile (PHP 8.3.36 with all
+extensions, composer reaching packagist through the proxy without DNS). Earlier CI runs caught two
+things this sandbox could not: the IDE settings path on macOS in the doctor tests, and the squid
+reload failing on Debian's squid 5.7.
 
 ### Running them yourself
 
