@@ -488,6 +488,28 @@ cb_set_project() {
   CB_NAME="$(cb_container_name "$dir")"
   CB_VOLUME="$CB_NAME-home"
   CB_PROJECT_CONFIG="$CB_PROJECTS_DIR/$CB_NAME.conf"
+  # What is mounted at the project path: the project itself, or the copy of
+  # an active try session (see `claude-ide-box up --try`).
+  CB_BASE_NAME="$CB_NAME"
+  CB_MOUNT_SRC="$dir"
+  CB_TRY=0
+  CB_TRY_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/claude-ide-box/try/$CB_BASE_NAME"
+  CB_TRY_MARK="$CB_STATE_DIR/try/$CB_BASE_NAME.active"
+  if [ -f "$CB_TRY_MARK" ]; then
+    cb_try_select
+  fi
+}
+
+# Switch to the try session's container, home volume and copy. The copy is
+# mounted at the project's own path, so paths the IDE sends stay valid.
+cb_try_select() {
+  [ -d "$CB_TRY_ROOT/work" ] ||
+    cb_die "the try session of $CB_PROJECT_DIR has no copy at $CB_TRY_ROOT/work; run 'claude-ide-box try discard' in $CB_PROJECT_DIR"
+  CB_TRY=1
+  CB_NAME="$CB_BASE_NAME-try"
+  CB_VOLUME="$CB_NAME-home"
+  CB_MOUNT_SRC="$CB_TRY_ROOT/work"
+  cb_log "try session active: $CB_MOUNT_SRC is mounted at $CB_PROJECT_DIR"
 }
 
 # --------------------------------------------------------------------------
@@ -1041,7 +1063,7 @@ cb_build_run_args() {
   # subshell below. Docker needs no extra query on this hot path.
   [ "$CB_ENGINE" != podman ] || cb_engine_facts
   cb_container_uid
-  CB_MOUNTS="$(cb_compute_mounts "$CB_PROJECT_DIR")" || exit 1
+  CB_MOUNTS="$(cb_compute_mounts "$CB_MOUNT_SRC")" || exit 1
 
   CB_RUN_ARGS=(
     --name "$CB_NAME"
@@ -1069,7 +1091,7 @@ cb_build_run_args() {
     --env "no_proxy=localhost,127.0.0.1,::1"
     --env "DISABLE_AUTOUPDATER=1"
     --mount "type=volume,src=$CB_VOLUME,dst=/home/claude"
-    --mount "type=bind,src=$CB_PROJECT_DIR,dst=$CB_PROJECT_DIR"
+    --mount "type=bind,src=$CB_MOUNT_SRC,dst=$CB_PROJECT_DIR"
   )
   local o
   for o in $(cb_engine_run_opts) $(cb_engine_user_opts); do
@@ -1083,20 +1105,23 @@ cb_build_run_args() {
   fi
   local tmpfs_opts=""
   [ "$CB_ENGINE" != podman ] || tmpfs_opts=",notmpcopyup"
+  local dst
   while IFS="$CB_TAB" read -r kind path; do
     [ -n "$kind" ] || continue
     case "$path" in
-      "$CB_PROJECT_DIR"/*) ;;
+      "$CB_MOUNT_SRC"/*) ;;
       *) cb_die "refusing to mount '$path': not inside the project" ;;
     esac
+    # Same path in the container; differs from the source only for a try copy.
+    dst="$CB_PROJECT_DIR${path#"$CB_MOUNT_SRC"}"
     case "$kind" in
       bad) cb_die "'$path' cannot be mounted safely (its name contains a comma, quote, tab or newline); rename or remove it" ;;
-      file) CB_RUN_ARGS+=(--mount "type=bind,src=$CB_EMPTY_FILE,dst=$path,readonly") ;;
+      file) CB_RUN_ARGS+=(--mount "type=bind,src=$CB_EMPTY_FILE,dst=$dst,readonly") ;;
       # Podman copies the masked directory's content into the tmpfs
       # (tmpcopyup) unless told not to; Docker never does and rejects the
       # option.
-      dir) CB_RUN_ARGS+=(--mount "type=tmpfs,dst=$path,tmpfs-size=1048576$tmpfs_opts") ;;
-      ro) CB_RUN_ARGS+=(--mount "type=bind,src=$path,dst=$path,readonly") ;;
+      dir) CB_RUN_ARGS+=(--mount "type=tmpfs,dst=$dst,tmpfs-size=1048576$tmpfs_opts") ;;
+      ro) CB_RUN_ARGS+=(--mount "type=bind,src=$path,dst=$dst,readonly") ;;
     esac
   done <<EOF
 $CB_MOUNTS

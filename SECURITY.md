@@ -34,6 +34,7 @@ do one of these:
 | reach the network beyond the allowlist | other domains, other ports, bare IPs, DNS, host or LAN services |
 | change the sandbox configuration | anything under `~/.config/claude-ide-box`, the proxy allowlist |
 | make the wrapper run `claude` on the host | any fail-open path |
+| abuse a try session (`up --try`) | make `try diff` or `try apply` read a host file outside the copy, write a masked or read-only path or a `.git` directory, write outside the project, or run anything from the project |
 
 ## Out of scope
 

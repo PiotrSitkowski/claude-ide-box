@@ -443,6 +443,39 @@ fi
 rm -rf "$evil"
 (cd "$PROJECT" && "$CLI" up >/dev/null 2>&1) || not_ok "container comes back after removing the bad name"
 
+echo "== ephemeral mode (up --try)"
+printf 'original\n' >"$PROJECT/try-me.txt"
+if (cd "$PROJECT" && "$CLI" up --try) >"$WORK/try.log" 2>&1; then
+  ok "up --try starts a container on a copy of the project"
+  TNAME="$NAME-try"
+  in_try() { "$DOCKER" exec -w "$PROJECT" "$TNAME" bash -c "$1"; }
+  v="$(in_try "cat .env" 2>&1 || true)"
+  [ -z "$v" ] && ok "try: .env is empty in the copy's container" || not_ok "try: .env is empty in the copy's container" "$v"
+  in_try "echo x > .git/config" >/dev/null 2>&1 && not_ok "try: .git is read-only" || ok "try: .git is read-only"
+  v="$(in_try "curl -sS -o /dev/null --noproxy '*' --max-time 8 https://1.1.1.1/ && echo reached" 2>/dev/null || true)"
+  [ -z "$v" ] && ok "try: no direct network either" || not_ok "try: no direct network either" "$v"
+  in_try "echo changed > try-me.txt && echo new > try-new.txt" || true
+  [ "$(cat "$PROJECT/try-me.txt")" = original ] && [ ! -e "$PROJECT/try-new.txt" ] &&
+    ok "try: the project is untouched while Claude works on the copy" ||
+    not_ok "try: the project is untouched while Claude works on the copy"
+  v="$(cd "$PROJECT" && "$CLI" try diff 2>&1 || true)"
+  case "$v" in
+    *"+changed"*"try-new.txt"* | *"try-new.txt"*"+changed"*) ok "try diff shows the copy's changes on the host" ;;
+    *) not_ok "try diff shows the copy's changes on the host" "$v" ;;
+  esac
+  v="$(cd "$PROJECT" && "$CLI" try apply 2>&1)" && st=0 || st=$?
+  if [ "$st" = 0 ] && [ "$(cat "$PROJECT/try-me.txt")" = changed ] && [ "$(cat "$PROJECT/try-new.txt")" = new ] &&
+    [ "$(cat "$PROJECT/.env")" = "SECRET=hunter2" ]; then
+    ok "try apply writes the changes and leaves the secret alone"
+  else
+    not_ok "try apply writes the changes and leaves the secret alone" "$v"
+  fi
+  "$DOCKER" inspect "$TNAME" >/dev/null 2>&1 && not_ok "try apply removes the copy's container" ||
+    ok "try apply removes the copy's container"
+else
+  not_ok "up --try starts a container on a copy of the project" "$(tail -n 20 "$WORK/try.log")"
+fi
+
 echo "== extra: fail closed"
 out="$(cd "$PROJECT" && DOCKER_HOST=unix:///nonexistent.sock CONTAINER_HOST=unix:///nonexistent.sock "$WRAPPER" --version 2>/dev/null)" && st=0 || st=$?
 if [ "$st" != 0 ] && [ -z "$out" ]; then

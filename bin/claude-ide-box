@@ -26,6 +26,8 @@ fi
 . "$CB_LIB/common.sh"
 # shellcheck source=lib/claude-ide-box/guard.sh
 . "$CB_LIB/guard.sh"
+# shellcheck source=lib/claude-ide-box/try.sh
+. "$CB_LIB/try.sh"
 
 cb_init_paths
 cb_init_state
@@ -48,7 +50,10 @@ Setup
   login --token-stdin         read an existing token from stdin instead
 
 Current project (the working directory)
-  up [--recreate]             create/start the project container
+  up [--recreate] [--try]     create/start the project container; --try works on a
+                              throw-away copy of the project instead
+  try [diff|apply|discard|end]
+                              review the copy's changes, then apply or discard them
   down                        stop it
   rm [--volume]               remove it (--volume also deletes its home volume,
                               i.e. conversation history and ~/.claude)
@@ -435,16 +440,20 @@ cmd_login() {
 # --------------------------------------------------------------------------
 
 cmd_up() {
-  local recreate=0
-  case "${1:-}" in
-    --recreate) recreate=1 ;;
-    "") ;;
-    *) cb_die "usage: claude-ide-box up [--recreate]" ;;
-  esac
+  local recreate=0 try=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --recreate) recreate=1 ;;
+      --try) try=1 ;;
+      *) cb_die "usage: claude-ide-box up [--recreate] [--try]" ;;
+    esac
+    shift
+  done
   project_from_pwd
   cb_load_config
   cb_find_docker
   cb_require_docker
+  [ "$try" = 1 ] || [ "$CB_TRY" != 1 ] || say "note: a try session is active; this is its container (see 'claude-ide-box try')"
   if [ "$recreate" = 1 ]; then
     if cb_container_busy; then
       cb_warn "a Claude session is running in $CB_NAME; it will be terminated"
@@ -452,6 +461,10 @@ cmd_up() {
     cb_docker rm -f "$CB_NAME" >/dev/null 2>&1 || true
     # An explicit recreate is the user saying the current tree is fine.
     CB_ACCEPT_MASK_CHANGES=1
+  fi
+  if [ "$try" = 1 ]; then
+    cmd_up_try
+    return 0
   fi
   cb_ensure_container
   say "$CB_NAME is running for $CB_PROJECT_DIR"
@@ -1337,6 +1350,7 @@ main() {
     guard) cmd_guard "$@" ;;
     doctor) cmd_doctor "$@" ;;
     quickstart) cmd_quickstart "$@" ;;
+    try) cmd_try "$@" ;;
     *) cb_die "unknown command '$cmd' (see 'claude-ide-box help')" ;;
   esac
 }
