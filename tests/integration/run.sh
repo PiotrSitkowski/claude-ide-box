@@ -454,6 +454,13 @@ check_with_preset() {
   "$CLI" preset "$1" off >/dev/null 2>&1 || true
 }
 
+cb_it_has_profile() {
+  case " ${CLAUDE_IDE_BOX_IT_PROFILES:-} " in
+    *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
 for profile in ${CLAUDE_IDE_BOX_IT_PROFILES:-}; do
   echo "== profile $profile"
   profile_project "$profile" "$profile" || continue
@@ -510,15 +517,17 @@ for profile in ${CLAUDE_IDE_BOX_IT_PROFILES:-}; do
   esac
 done
 
-case " ${CLAUDE_IDE_BOX_IT_PROFILES:-} " in
-  *" go "*" python "* | *" python "*" go "*)
-    echo "== combined profiles"
-    if profile_project combo "python go"; then
-      in_profile "go version && uv --version" >/dev/null 2>&1 &&
-        ok "profiles combine: go and uv in one container" || not_ok "profiles combine: go and uv in one container"
-    fi
-    ;;
-esac
+if cb_it_has_profile go && cb_it_has_profile python; then
+  echo "== combined profiles"
+  # The user's flow: choose the profiles, build them with setup, start.
+  mkdir -p "$WORK/profile-combo"
+  if ! (cd "$WORK/profile-combo" && "$CLI" profile python go && "$CLI" setup) >"$WORK/combo-setup.log" 2>&1; then
+    not_ok "profiles combine: 'profile python go' + setup builds the chain" "$(tail -n 15 "$WORK/combo-setup.log")"
+  elif profile_project combo "python go"; then
+    in_profile "go version && uv --version" >/dev/null 2>&1 &&
+      ok "profiles combine: go and uv in one container" || not_ok "profiles combine: go and uv in one container"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"

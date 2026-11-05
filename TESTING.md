@@ -34,9 +34,9 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 108 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 108 passed, 0 failed |
-| CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 108 passed, 0 failed in each (run 8, commit `ce4c436`) |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 121 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 121 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image) |
+| CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 121 passed, 0 failed in each (run 18, commit `f082f17`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
 commit as the code, but were run red before the implementation existed (35 of 39 wrapper tests and
@@ -74,7 +74,9 @@ nothing was verified; with `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is 
 
 ### Where they ran
 
-**Development sandbox - 54 passed, 0 failed, 0 skipped.** Native Docker Engine 29.9.2 on Linux
+**Development sandbox - 69 passed, 0 failed, 0 skipped** with `CLAUDE_IDE_BOX_IT_PROFILES="python go
+java office"`, and 64 passed with `"python go"` after the combined-profile check was fixed (see
+below). Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
 all through regular configuration keys rather than test-only code paths:
@@ -85,14 +87,20 @@ all through regular configuration keys rather than test-only code paths:
 | `PROXY_BASE_IMAGE=ubuntu:24.04`, `BUILD_NETWORK=host` | same reason |
 | `UPSTREAM_PROXY=172.17.0.1:3129` | the sandbox has no direct egress; squid forwarded to the sandbox's own egress proxy (which re-terminates TLS, hence the CA above) |
 
-The php profile was **not** built there: it needs `php:8.3-cli-bookworm` plus Debian packages,
-and Debian mirrors are unreachable from that sandbox.
+The `php` and `rust` profiles were **not** built there: `php` needs Debian packages from mirrors
+the sandbox cannot reach, and `rustup` in the rust build stage does not trust the sandbox's TLS
+interception CA.
 
-**CI (ubuntu-latest) - 58 passed, 0 failed, 0 skipped** (run 8, commit `ce4c436`): the same suite
-with the real Debian-based images, direct egress and the php profile (PHP 8.3.36 with all
-extensions, composer reaching packagist through the proxy without DNS). Earlier CI runs caught two
-things this sandbox could not: the IDE settings path on macOS in the doctor tests, and the squid
-reload failing on Debian's squid 5.7.
+**CI (ubuntu-latest) - 75 passed, 0 failed, 0 skipped** (run 18, commit `f082f17`): the same suite
+with the real Debian-based images, direct egress and all six profiles - `php` (PHP 8.3.36),
+`python`, `go`, `rust`, `java`, `office` - each downloading its packages through the proxy without
+DNS. That run did not execute the combined-profile check: a `case` pattern with overlapping spaces
+never matched, so the check was silently skipped. It now runs through the user's flow
+(`profile python go`, `setup`, start) and passes in the sandbox; the next CI run includes it.
+
+Earlier CI runs caught things this sandbox could not: the IDE settings path on macOS in the doctor
+tests, the squid reload failing on Debian's squid 5.7, a shellcheck 0.11 warning, and the `forward`
+message appearing before its socket listened.
 
 ### Running them yourself
 
