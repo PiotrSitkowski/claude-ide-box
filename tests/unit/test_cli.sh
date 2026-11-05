@@ -550,10 +550,15 @@ test_forward_rejects_bad_ports() {
 }
 
 test_forward_relays_a_connection_through_docker_exec() {
+  if ! command -v perl >/dev/null 2>&1; then
+    # forward needs perl, which macOS and Linux ship but busybox images do not.
+    echo "SKIPPED: no perl on this system"
+    return 0
+  fi
   local port=$((20000 + RANDOM % 20000)) reply=""
   (cd "$PROJECT" && exec "$CLI" forward 5173 "$port" >"$SANDBOX/fwd.out" 2>&1) &
-  local pid=$! i
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  local pid=$! _
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
     if grep -q "127.0.0.1:$port" "$SANDBOX/fwd.out" 2>/dev/null; then break; fi
     sleep 0.2
   done
