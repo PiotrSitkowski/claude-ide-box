@@ -374,6 +374,106 @@ else
   ok "another project's files are invisible"
 fi
 
+echo "== read-only .claude"
+in_box "mkdir -p .claude/commands" >/dev/null 2>&1 && not_ok "a .claude directory cannot be created in" || ok "a .claude directory cannot be created in"
+in_box "echo '{\"hooks\":{}}' > .claude/settings.json" >/dev/null 2>&1 && not_ok ".claude/settings.json cannot be written" || ok ".claude/settings.json cannot be written"
+in_box "echo '# notes' >> CLAUDE.md" >/dev/null 2>&1 && ok "CLAUDE.md stays writable" || not_ok "CLAUDE.md stays writable"
+rm -f "$PROJECT/CLAUDE.md"
+
+# What Claude Code does when "always allow" in the panel cannot be saved:
+# drive it like the extension against a fake API (permission-probe.js).
+docker exec -i "$NAME" sh -c 'cat > /tmp/permission-probe.js' <"$REPO_DIR/tests/integration/permission-probe.js"
+probe() {
+  docker exec -w "$PROJECT" "$NAME" node /tmp/permission-probe.js localSettings 2>&1 | tail -n 1
+  rm -f "$PROJECT/permission-probe.txt"
+}
+v="$(probe)"
+printf '      probe: %s\n' "$(printf '%s' "$v" | cut -c1-400)"
+case "$v" in
+  *'"prompts":1,'*'"exit":0,'*'"ranTimes":2,'*'"settingsLocalExists":false'*)
+    ok "read-only .claude: 'always allow' holds for the session, is not saved, and the session goes on" ;;
+  *) not_ok "read-only .claude: 'always allow' holds for the session, is not saved, and the session goes on" "$v" ;;
+esac
+case "$v" in
+  *'"stderr":""'*'"errors":[]'*) ok "read-only .claude: no error is shown for the failed save" ;;
+  *) not_ok "read-only .claude: no error is shown for the failed save" "$v" ;;
+esac
+v="$(probe)"
+case "$v" in
+  *'"prompts":1,'*) ok "read-only .claude: the next session asks again" ;;
+  *) not_ok "read-only .claude: the next session asks again" "$v" ;;
+esac
+# Positive control: with CLAUDE_DIR_WRITABLE=1 the same probe saves the rule.
+CONF="$XDG_CONFIG_HOME/claude-ide-box/projects/$NAME.conf"
+mkdir -p "$(dirname "$CONF")"
+printf 'CLAUDE_DIR_WRITABLE=1\n' >"$CONF"
+(cd "$PROJECT" && "$CLI" up --recreate >/dev/null 2>&1) || not_ok "up --recreate with CLAUDE_DIR_WRITABLE=1"
+docker exec -i "$NAME" sh -c 'cat > /tmp/permission-probe.js' <"$REPO_DIR/tests/integration/permission-probe.js"
+v="$(probe)"
+case "$v" in
+  *'"prompts":1,'*'"settingsLocalExists":true'*) ok "control: with CLAUDE_DIR_WRITABLE=1 the rule is saved to .claude/settings.local.json" ;;
+  *) not_ok "control: with CLAUDE_DIR_WRITABLE=1 the rule is saved" "$v" ;;
+esac
+rm -rf "$PROJECT/.claude/settings.local.json" "$CONF"
+(cd "$PROJECT" && "$CLI" up --recreate >/dev/null 2>&1) || not_ok "up --recreate back to a read-only .claude"
+
+echo "== COPY_HISTORY: finished transcripts copied to the host"
+U1=0a1b2c3d-1111-4222-8333-444455556666
+U2=0a1b2c3d-2222-4222-8333-444455556666
+U3=0a1b2c3d-3333-4222-8333-444455556666
+U4=0a1b2c3d-4444-4222-8333-444455556666
+U5=0a1b2c3d-5555-4222-8333-444455556666
+SLUG="$(bash -c '. "$1/lib/claude-ide-box/common.sh"; . "$1/lib/claude-ide-box/history.sh"; cb_claude_project_slug "$2"' _ "$REPO_DIR" "$PROJECT")"
+CT="/home/claude/.claude/projects/$SLUG"
+HDIR="$HOME/.claude/projects/$SLUG"
+printf 'COPY_HISTORY=1\nCOPY_HISTORY_MAX_SIZE=4k\n' >"$CONF"
+in_box "mkdir -p '$CT/memory' '$CT/$U1' && cd '$CT' && printf '{\"n\":1}\n' > $U1.jsonl && ln -s /etc/passwd $U2.jsonl \
+  && mkfifo $U3.jsonl && head -c 5000 /dev/zero | tr '\\0' x > $U4.jsonl && printf '{\"box\":1}\n' > $U5.jsonl \
+  && printf '{\"n\":1}\n' > notes.jsonl && echo remember > memory/MEMORY.md && printf '{}\n' > $U1/sub.jsonl \
+  && touch -d @\$(( \$(date +%s) - 60 )) $U1.jsonl $U4.jsonl $U5.jsonl notes.jsonl" ||
+  not_ok "transcript fixtures in the container volume"
+mkdir -p "$HDIR"
+printf '{"host":1}\n' >"$HDIR/$U5.jsonl"
+done_before="$(grep -c 'history: done' "$XDG_STATE_HOME/claude-ide-box/wrapper.log" || true)"
+out="$(cd "$PROJECT" && "$WRAPPER" --version 2>/dev/null)"
+for _ in $(seq 1 60); do
+  [ "$(grep -c 'history: done' "$XDG_STATE_HOME/claude-ide-box/wrapper.log" || true)" -gt "$done_before" ] && break
+  sleep 0.5
+done
+case "$out" in
+  *"Claude Code"*) ok "the wrapper's stdout is unchanged with COPY_HISTORY=1" ;;
+  *) not_ok "the wrapper's stdout is unchanged with COPY_HISTORY=1" "$out" ;;
+esac
+[ "$(cat "$HDIR/$U1.jsonl" 2>/dev/null)" = '{"n":1}' ] && [ ! -L "$HDIR/$U1.jsonl" ] &&
+  ok "a finished transcript is copied to ~/.claude/projects/$SLUG" ||
+  not_ok "a finished transcript is copied" "$(ls -la "$HDIR" 2>&1)"$'\n'"$(grep 'history:' "$XDG_STATE_HOME/claude-ide-box/wrapper.log")"
+for f in "$U2.jsonl:a symlink" "$U3.jsonl:a FIFO" "$U4.jsonl:a file over the size limit" "notes.jsonl:a name that is not a session id" "memory:memory/" "$U1:a session subdirectory"; do
+  if [ -e "$HDIR/${f%%:*}" ] || [ -L "$HDIR/${f%%:*}" ]; then
+    not_ok "${f#*:} is not copied"
+  else
+    ok "${f#*:} is not copied"
+  fi
+done
+[ "$(cat "$HDIR/$U5.jsonl")" = '{"host":1}' ] && ok "a host transcript it did not create is not overwritten" ||
+  not_ok "a host transcript it did not create is not overwritten"
+grep -q "$U5.jsonl exists and was not created by" "$XDG_STATE_HOME/claude-ide-box/wrapper.log" &&
+  ok "the skipped host file is logged" || not_ok "the skipped host file is logged"
+grep -q "$HDIR/$U1.jsonl" "$XDG_STATE_HOME/claude-ide-box/history/$NAME.list" 2>/dev/null &&
+  ok "the copy is recorded" || not_ok "the copy is recorded"
+# The container-side reader on its own: symlink and FIFO refused, quickly.
+bash -c '. "$1/lib/claude-ide-box/common.sh"; . "$1/lib/claude-ide-box/history.sh"; cb_history_node_script' _ "$REPO_DIR" |
+  docker exec -i "$NAME" sh -c 'cat > /tmp/history.js'
+in_box "node /tmp/history.js read '$CT/$U2.jsonl' 4096" >/dev/null 2>&1 &&
+  not_ok "the reader refuses a symlink" || ok "the reader refuses a symlink"
+st=0
+in_box "timeout 10 node /tmp/history.js read '$CT/$U3.jsonl' 4096" >/dev/null 2>&1 || st=$?
+case "$st" in
+  0 | 124) not_ok "the reader refuses a FIFO without blocking" "status $st" ;;
+  *) ok "the reader refuses a FIFO without blocking" ;;
+esac
+in_box "rm -rf '$CT'"
+rm -rf "$HDIR" "$CONF"
+
 echo "== extra: a new secret file causes the container to be recreated with a mask"
 printf 'NEW=1\n' >"$PROJECT/.env.local"
 (cd "$PROJECT" && "$WRAPPER" --version >/dev/null 2>&1) || true

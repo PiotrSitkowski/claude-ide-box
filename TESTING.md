@@ -25,8 +25,9 @@ dependency to install on every runner for no extra coverage.
 
 | File | Covers |
 |---|---|
-| `test_wrapper.sh` | dropping 0, 1 and 2 leading paths; subcommands and `/slash` prompts kept; stdout carries only the container's output; exit status and stdin passed through; container name and sanitisation; identical mount path; hardening flags; masks only for existing files (nested, directories, PrestaShop preset); read-only directories created with normal permissions; `GIT_WRITABLE`; recreate on a new secret file, refusal while a session is active; fail closed without daemon, without docker, without image, for `/`, `$HOME` and its parents; environment passed by name only with deny list and host-path filter; token never on a command line or in the log; host-path flags dropped, inline JSON kept, `..` escapes caught; parallel starts create one container; stale lock removal; invocation through a guard symlink; unknown config key fails closed; CPU clamping; automatic guard; paths with commas, quotes or newlines refused before `docker run` (mount-option injection); a symlinked secret is masked at the logical path when the project path itself contains a symlink; prompts that contain paths are not dropped; `~`-relative env values are not passed; invalid `MEMORY`/`CPUS`/`TMP_SIZE`/UID settings rejected; an active session is recognised for both `claude` and `claude.exe`; nested `.git` directories and files read-only, a new one triggers recreation; masks found inside `node_modules` and `vendor`; a masked file moved away (renamed parent) or replaced by a decoy stops the start until `up --recreate` |
+| `test_wrapper.sh` | dropping 0, 1 and 2 leading paths; subcommands and `/slash` prompts kept; stdout carries only the container's output; exit status and stdin passed through; container name and sanitisation; identical mount path; hardening flags; masks only for existing files (nested, directories, PrestaShop preset); read-only directories created with normal permissions; `GIT_WRITABLE`; recreate on a new secret file, refusal while a session is active; fail closed without daemon, without docker, without image, for `/`, `$HOME` and its parents; environment passed by name only with deny list and host-path filter; token never on a command line or in the log; host-path flags dropped, inline JSON kept, `..` escapes caught; parallel starts create one container; stale lock removal; invocation through a guard symlink; unknown config key fails closed; CPU clamping; automatic guard; paths with commas, quotes or newlines refused before `docker run` (mount-option injection); a symlinked secret is masked at the logical path when the project path itself contains a symlink; prompts that contain paths are not dropped; `~`-relative env values are not passed; invalid `MEMORY`/`CPUS`/`TMP_SIZE`/UID settings rejected; an active session is recognised for both `claude` and `claude.exe`; nested `.git` directories and files read-only, a new one triggers recreation; masks found inside `node_modules` and `vendor`; a masked file moved away (renamed parent) or replaced by a decoy stops the start until `up --recreate`; `.claude` read-only by default, `CLAUDE_DIR_WRITABLE=1` per project (recreates the container), `CLAUDE.md` not mounted read-only |
 | `test_cli.sh` | `guard` on both bundled-binary layouts and several versions, idempotence, `--undo`, six concurrent runs keeping the original binary; `allow` validation and proxy reload; presets (`php`, `github` warning, `prestashop` per project); generated allowlist; `setup` (internal network with `inhibit_ipv4`, proxy attached at its fixed IP, UID/GID and version build args, profiles, build failure, no daemon); `up`, `up --recreate`, `down`, `rm`, `rm --volume`, `shell`, `status`, `logs`; `login --token-stdin` (mode 600, rejects garbage); `doctor` (healthy host, `useTerminal: true`, wrapper unset, legacy key, commented-out key, unguarded binary, `claude` running on the host, `claude` on PATH, no daemon, non-internal network, `git.autoRepositoryDetection` warning); modules: profile chains (`env:a.b`), user profiles and presets in `~/.config`, `profile`/`profiles`/`presets` commands, the current project's profiles built by `setup`, an unknown profile failing closed, a profile image with root-owned files in `/home/claude` rejected; `forward`: port validation, a TCP connection relayed through `docker exec ... socat`, loopback-only listener |
+| `test_history.sh` | `COPY_HISTORY`: off by default (no listing at all); a regular transcript copied and recorded; stdout and the `--resume` argument unchanged; not copied: a symlink, a FIFO, names that are not lowercase `<UUID>.jsonl` (also `memory/`, session subdirectories, a directory with a transcript name), a file over `COPY_HISTORY_MAX_SIZE`, files past `COPY_HISTORY_MAX_TOTAL`, a file modified in the last seconds (copied later); a host file it did not create is never overwritten, also not on a later start; never written through a host symlink; its own copy updated when the container's file changes, but not when the copy changed on the host; `CLAUDE_CONFIG_DIR` honoured; settings validated; the project directory name equals Claude Code's for ASCII, Polish, emoji and over-200-character paths; the container-side node script (run with the host's node when it has one) lists types without printing unsafe names, ignores a symlinked directory, and its reader refuses a symlink, a FIFO (without blocking) and an oversized file |
 | `test_install.sh` | install, settings snippet, idempotence, refusing to overwrite foreign files, no sudo, `--uninstall` undoes guard and keeps config, `--prefix` |
 | `test_integration_skip.sh` | the integration suite says SKIPPED without Docker and fails when `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` |
 
@@ -34,8 +35,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 123 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 123 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image) |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 144 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 144 passed, 0 failed (SKIPPED inside passing tests: `forward`, no perl; the two container-script tests, no node) |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
@@ -46,6 +47,19 @@ injection, nested repositories and mask escapes, then a decoy-replacement test, 
 fixes, and so were the 8 tests for the code review findings. One of them is worth noting: six
 concurrent `guard` runs made one process `chmod a-x` a `.orig` that another had just turned into
 a symlink, which removed the execute bit from the real wrapper.
+
+`COPY_HISTORY` and the read-only `.claude` were written the same way. Before the implementation,
+16 of the 18 history tests and the 2 `.claude` mount tests failed; `CLAUDE_DIR_WRITABLE must be 0
+or 1` and `CLAUDE.md stays writable` passed as refusal checks do, and the 2 container-script tests
+were at first silently skipped because `node` is not on the sandbox `PATH` - the helper now records
+the host's node, and both failed red before `history.sh` existed. The red run also caught two
+mistakes in the tests themselves: "no `node` call" matched `nodev` in the tmpfs options, and an
+"upper-case UUID" made of digits was identical to the valid name. The CI log of the first run
+showed orphaned `sleep` processes from the copy's watchdog; the watchdog now stops its own `sleep`.
+In that period `test_live_lock_is_not_broken_while_its_pid_file_flickers` (timing-based, about 9 s)
+failed twice - once locally while images were being built, once on the macOS runner, whose second
+run of the same commit passed - and passed in 12 isolated and 3 full runs on this branch and on
+`main` alike; whether the change makes it more likely is not established.
 
 ## Integration tests
 
@@ -64,6 +78,8 @@ real installation, and then checks from inside real containers:
 | (g) wrapper | `claude-ide-box-exec /fake/native-binary/claude --version` prints exactly one line, the version |
 | extra | host listeners unreachable on the internal gateway and `docker0` (with a positive control from the default bridge); Claude Code's API request goes through squid without DNS (tunnel count in the squid log rises, the API answers "Invalid API key" to a fake key); squid runs without capabilities as `proxy` on a read-only rootfs; `claude-ide-box logs` shows the denial; one project's `~/.claude` and files are invisible to another; fail closed with an unreachable daemon and for `$HOME` |
 | allowlist reload | a domain is refused before `claude-ide-box allow` and passes right after it, and squid confirms the reload (it is signalled with SIGHUP; `squid -k reconfigure` depends on a PID file that `squid -N` does not always write, which made the reload fail on Debian's squid 5.7 in CI) |
+| read-only `.claude` | creating `.claude/commands` and writing `.claude/settings.json` fail, `CLAUDE.md` stays writable; Claude Code driven like the extension (`permission-probe.js`, a fake API on 127.0.0.1 inside the container) gets "always allow" for `localSettings`: the rule holds for the session (one prompt for two identical commands), nothing is saved, nothing on stderr or in the stream, exit 0; the next session asks again; control with `CLAUDE_DIR_WRITABLE=1`: the rule is saved |
+| `COPY_HISTORY` | in a real container volume: a finished transcript is copied; a symlink, a FIFO, a file over the limit, a non-UUID name, `memory/` and a session subdirectory are not; a foreign host transcript is kept and the skip logged; the copy is recorded; the container-side reader refuses a symlink and a FIFO (without blocking); the wrapper's stdout is unchanged |
 | security fixes | a nested `.git` is read-only after the next start; a directory named `q,src=$HOME,dst=...` with a `.env` inside stops the container from being created |
 | dev servers | `claude-ide-box forward` serves a server running in the container on `127.0.0.1` of the host; the container still publishes no ports |
 | base image | a native npm module compiles with node-gyp (no header download); Python 3 with venv |
@@ -76,7 +92,11 @@ nothing was verified; with `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is 
 
 **Development sandbox - 69 passed, 0 failed, 0 skipped** with `CLAUDE_IDE_BOX_IT_PROFILES="python go
 java office"`, and 64 passed with `"python go"` after the combined-profile check was fixed (see
-below). Native Docker Engine 29.9.2 on Linux
+below). With the read-only `.claude` and `COPY_HISTORY` checks, **78 passed, 0 failed, 0 skipped**
+without profiles (57 before them in the same setup). That run used a base image with Ubuntu's own
+`ubuntu` user (UID 1000) removed, because it ran as UID 30033 and the UID-collision path is not
+what it tested; running as root there fails two unrelated checks (the project is not writable for
+UID 1000, and the hand-made base lacked Node's headers). Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
 all through regular configuration keys rather than test-only code paths:

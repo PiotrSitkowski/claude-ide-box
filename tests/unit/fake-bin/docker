@@ -134,6 +134,42 @@ case "$cmd" in
       esac
       exit 0
     fi
+    if [ "${1:-}" = node ] && [ "${2:-}" = -e ]; then
+      # The history copy's script: list or read in the container's home,
+      # which lives in $FAKE_DOCKER_DIR/home. mtimes come from
+      # $FAKE_DOCKER_DIR/mtime.<name> (default: long ago).
+      mode="${4:-}"
+      p="${5:-}"
+      case "$p" in
+        /home/claude/*) p="$dir/home/${p#/home/claude/}" ;;
+        *) echo "fake docker: node outside the home volume: $p" >&2; exit 2 ;;
+      esac
+      case "$mode" in
+        list)
+          printf 'now\t%s\n' "${FAKE_NOW:-2000000000}"
+          if [ -d "$p" ] && [ ! -L "$p" ]; then
+            for f in "$p"/* "$p"/.[!.]*; do
+              [ -e "$f" ] || [ -L "$f" ] || continue
+              n="${f##*/}"
+              if [ -L "$f" ]; then t=l; elif [ -p "$f" ]; then t=p; elif [ -d "$f" ]; then t=d; elif [ -f "$f" ]; then t=f; else t=o; fi
+              s=0
+              [ "$t" != f ] || s="$(wc -c <"$f" | tr -d ' ')"
+              m="$(cat "$dir/mtime.$n" 2>/dev/null || echo 1000000000)"
+              printf '%s\t%s\t%s\t%s\n' "$t" "$s" "$m" "$n"
+            done
+          fi
+          ;;
+        read)
+          if [ -L "$p" ] || [ ! -f "$p" ]; then
+            echo "not a regular file" >&2
+            exit 3
+          fi
+          cat "$p"
+          ;;
+        *) exit 2 ;;
+      esac
+      exit 0
+    fi
     if [ "${1:-}" = "sh" ] && printf '%s' "$*" | grep -q socat; then
       # forward: behave like a tiny echo service behind socat
       printf '%s\n' "$*" >"$dir/forward.cmd"
