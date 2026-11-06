@@ -1,7 +1,8 @@
 """Command line: python -m pii_airgap <command> ...
 
 Exit status: 0 ok, 1 error, 2 usage, 3 refused (anonymise) or PII found
-(scan --fail-on-pii), 4 restore found unknown or altered tokens.
+(scan --fail-on-pii), 4 restore found unknown or altered tokens, 5 verify
+found values of the map in clear text.
 """
 
 import argparse
@@ -13,7 +14,7 @@ from . import __version__
 from .detect import Detector, parse_list_file
 from .ner import load_backend
 from .scan import scan_tree
-from .tokens import TokenCollision, Unrewritable, anonymise_tree, restore_tree
+from .tokens import TokenCollision, Unrewritable, anonymise_tree, restore_tree, verify_tree
 
 TEXT_METHODS = ("text", "text-cp1250")
 
@@ -121,9 +122,21 @@ def cmd_anonymise(args):
     return 0
 
 
+IN_PLACE_WARNING = (
+    "pii-airgap: WARNING: restored in place - %s now holds real personal data again. It must not be "
+    "opened with an AI agent any more (Claude IDE Box refuses to start in it); use --out DIR next time.\n")
+
+
 def cmd_restore(args):
+    chosen = [x for x in (args.out is not None, args.into_base, args.in_place) if x]
+    if len(chosen) != 1:
+        sys.stderr.write("pii-airgap: restore needs exactly one destination: --out DIR (a new folder with the "
+                         "real values; the copy keeps its tokens), --into-base (apply the changes to the "
+                         "--base folder) or --in-place (unsafe: the copy holds real values afterwards)\n")
+        return 2
     try:
-        r = restore_tree(args.root, args.map, args.base, keep_unresolved=args.keep_unresolved)
+        r = restore_tree(args.root, args.map, args.base, keep_unresolved=args.keep_unresolved,
+                         out=args.out, into_base=args.into_base)
     except (OSError, ValueError) as e:
         _die("cannot restore: %s" % e)
     for p in r.problems:
@@ -132,8 +145,25 @@ def cmd_restore(args):
         sys.stderr.write("pii-airgap: %d token problem(s); nothing was restored. Fix the tokens in the files "
                          "above, or pass --keep-unresolved to leave them as they are.\n" % len(r.problems))
         return 4
+    for rel in getattr(r, "kept", []):
+        sys.stderr.write("pii-airgap: %s is not in the copy; left in the original\n" % rel)
     sys.stderr.write("pii-airgap: restored %d file(s)%s\n"
                      % (len(r.changed), ", %d problem(s) left as written" % len(r.problems) if r.problems else ""))
+    if args.in_place:
+        sys.stderr.write(IN_PLACE_WARNING % args.root)
+    return 0
+
+
+def cmd_verify(args):
+    try:
+        found = verify_tree(args.root, args.map)
+    except (OSError, ValueError) as e:
+        _die("cannot verify: %s" % e)
+    for rel, n in found:
+        sys.stdout.write("%s\t%d\n" % (rel, n))
+    if found:
+        sys.stderr.write("pii-airgap: %d file(s) contain values of the token map in clear text\n" % len(found))
+        return 5
     return 0
 
 
@@ -168,6 +198,13 @@ def main(argv=None):
     r.add_argument("--map", required=True)
     r.add_argument("--base", help="the original tree, to tell new near-miss tokens from old text")
     r.add_argument("--keep-unresolved", action="store_true")
+    r.add_argument("--out", help="write the restored tree to this empty directory; the copy keeps its tokens")
+    r.add_argument("--into-base", action="store_true", help="write changed and new files into --base")
+    r.add_argument("--in-place", action="store_true", help="unsafe: restore the copy itself")
+
+    v = sub.add_parser("verify", help="list files that contain values of the token map in clear text")
+    v.add_argument("root")
+    v.add_argument("--map", required=True)
 
     sub.add_parser("system-prompt", help="print the instructions to append to the agent's system prompt")
 
@@ -178,6 +215,8 @@ def main(argv=None):
         return cmd_anonymise(args)
     if args.cmd == "restore":
         return cmd_restore(args)
+    if args.cmd == "verify":
+        return cmd_verify(args)
     if args.cmd == "system-prompt":
         sys.stdout.write(SYSTEM_PROMPT)
         return 0

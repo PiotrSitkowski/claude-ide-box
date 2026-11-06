@@ -90,12 +90,18 @@ jobs:
       - name: Free disk space for the model
         if: matrix.ner == 'gliner'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+      - name: Claude IDE Box sources (pre-start check of restored copies)
+        uses: actions/checkout@v4
+        with:
+          repository: PiotrSitkowski/claude-ide-box
+          ref: main
+          path: .cib
       - name: Build the image (NER=${{ matrix.ner }})
         run: docker build -f image/Dockerfile --build-arg NER=${{ matrix.ner }} -t pii-airgap:${{ matrix.ner }} .
       - name: Image size
         run: docker image ls pii-airgap
       - name: Integration tests
-        run: PII_AIRGAP_IMAGE=pii-airgap:${{ matrix.ner }} PII_AIRGAP_REQUIRE_DOCKER=1 tests/integration/run.sh
+        run: CLAUDE_IDE_BOX_SRC="$PWD/.cib" PII_AIRGAP_IMAGE=pii-airgap:${{ matrix.ner }} PII_AIRGAP_REQUIRE_DOCKER=1 tests/integration/run.sh
       - name: Evaluation inside the image, without network
         run: |
           docker run --rm --network none --read-only --tmpfs /tmp -v "$PWD":/r:ro --entrypoint python3 \

@@ -72,14 +72,44 @@ class CliTests(unittest.TestCase):
         with open(os.path.join(self.root, "a.txt")) as f:
             self.assertEqual(f.read(), "[PERSON_1], PESEL [PESEL_1]\n")
         write(os.path.join(self.root, "c.txt"), "[PERSON_2]\n")
-        r = run("restore", self.root, "--map", m)
+        out = os.path.join(self.tmp.name, "out")
+        os.mkdir(out)
+        r = run("restore", self.root, "--map", m, "--out", out)
         self.assertEqual(r.returncode, 4)
         self.assertIn("c.txt:1: unknown token [PERSON_2]", r.stderr)
         os.unlink(os.path.join(self.root, "c.txt"))
-        r = run("restore", self.root, "--map", m)
+        r = run("restore", self.root, "--map", m, "--out", out)
         self.assertEqual(r.returncode, 0, r.stderr)
-        with open(os.path.join(self.root, "a.txt")) as f:
+        with open(os.path.join(out, "a.txt")) as f:
             self.assertEqual(f.read(), "Jan Kowalski, PESEL 44051401359\n")
+        with open(os.path.join(self.root, "a.txt")) as f:
+            self.assertEqual(f.read(), "[PERSON_1], PESEL [PESEL_1]\n")
+
+    def test_restore_needs_a_destination(self):
+        m = os.path.join(self.tmp.name, "state", "map.json")
+        run("anonymise", self.root, "--map", m, "--lists", self.lists)
+        r = run("restore", self.root, "--map", m)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--out", r.stderr)
+        with open(os.path.join(self.root, "a.txt")) as f:
+            self.assertEqual(f.read(), "[PERSON_1], PESEL [PESEL_1]\n")
+        r = run("restore", self.root, "--map", m, "--in-place")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("must not be opened", r.stderr)
+
+    def test_verify_exit_status_and_no_values_printed(self):
+        m = os.path.join(self.tmp.name, "state", "map.json")
+        run("anonymise", self.root, "--map", m, "--lists", self.lists)
+        r = run("verify", self.root, "--map", m)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        run("restore", self.root, "--map", m, "--in-place")
+        r = run("verify", self.root, "--map", m)
+        self.assertEqual(r.returncode, 5)
+        self.assertEqual(r.stdout, "a.txt\t2\n")
+        self.assertNotIn("44051401359", r.stdout + r.stderr)
+        self.assertNotIn("Kowalski", r.stdout + r.stderr)
+        r = run("verify", self.root, "--map", os.path.join(self.tmp.name, "missing.json"))
+        self.assertEqual(r.returncode, 1)
 
     def test_anonymise_refusal_exit_status(self):
         os.makedirs(os.path.join(self.root, ".git"))

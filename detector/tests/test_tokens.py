@@ -12,6 +12,7 @@ from pii_airgap.tokens import (
     anonymise_tree,
     restore_text,
     restore_tree,
+    verify_tree,
 )
 
 
@@ -187,6 +188,102 @@ class TreeTests(unittest.TestCase):
         restore_tree(self.root, self.map, self.base)
         anonymise_tree(self.root, self.map, self.d, git="strip")
         self.assertEqual(read(os.path.join(self.root, "a.txt")), "[PERSON_1], PESEL [PESEL_1]\n")
+
+    # A restored copy must never be the folder an agent works in again, so
+    # restoration writes elsewhere and the copy keeps its tokens.
+
+    def test_restore_to_out_leaves_the_copy_tokenised(self):
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        write(os.path.join(self.root, "new.txt"), "Owner: [PERSON_1]\n")
+        out = os.path.join(self.tmp.name, "out")
+        os.mkdir(out)
+        rep = restore_tree(self.root, self.map, self.base, out=out)
+        self.assertTrue(rep.written)
+        self.assertEqual(read(os.path.join(self.root, "a.txt")), "[PERSON_1], PESEL [PESEL_1]\n")
+        self.assertEqual(read(os.path.join(self.root, "new.txt")), "Owner: [PERSON_1]\n")
+        self.assertEqual(read(os.path.join(out, "a.txt")), "Jan Kowalski, PESEL 44051401359\n")
+        self.assertEqual(read(os.path.join(out, "new.txt")), "Owner: Jan Kowalski\n")
+        self.assertEqual(read(os.path.join(out, "clean.md")), "nothing here\n")
+        with open(os.path.join(out, "bin.dat"), "rb") as f:
+            self.assertEqual(f.read(), b"\x00\x01Jan Kowalski")
+        # Only the binary file, which anonymise cannot rewrite, still holds a value.
+        self.assertEqual(verify_tree(self.root, self.map), [("bin.dat", 1)])
+
+    def test_restore_to_out_needs_an_empty_directory(self):
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        out = os.path.join(self.tmp.name, "out")
+        write(os.path.join(out, "x.txt"), "x\n")
+        with self.assertRaises(ValueError):
+            restore_tree(self.root, self.map, self.base, out=out)
+
+    def test_restore_to_out_writes_nothing_on_a_problem(self):
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        write(os.path.join(self.root, "new.txt"), "[PERSON_9]\n")
+        out = os.path.join(self.tmp.name, "out")
+        os.mkdir(out)
+        rep = restore_tree(self.root, self.map, self.base, out=out)
+        self.assertFalse(rep.written)
+        self.assertEqual(os.listdir(out), [])
+
+    def test_restore_into_base_applies_changes_only(self):
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        write(os.path.join(self.root, "src/b.py"), "OWNER = '[PERSON_1]'  # checked\n")
+        write(os.path.join(self.root, "docs/new.md"), "[PERSON_1]\n")
+        os.unlink(os.path.join(self.root, "clean.md"))
+        before = os.stat(os.path.join(self.base, "a.txt")).st_mtime_ns
+        rep = restore_tree(self.root, self.map, self.base, into_base=True)
+        self.assertTrue(rep.written)
+        self.assertEqual(sorted(rep.changed), ["docs/new.md", "src/b.py"])
+        self.assertEqual(read(os.path.join(self.base, "src/b.py")), "OWNER = 'Jan Kowalski'  # checked\n")
+        self.assertEqual(read(os.path.join(self.base, "docs/new.md")), "Jan Kowalski\n")
+        self.assertEqual(os.stat(os.path.join(self.base, "a.txt")).st_mtime_ns, before)
+        # Deleted in the copy: left in place and reported, never deleted.
+        self.assertTrue(os.path.exists(os.path.join(self.base, "clean.md")))
+        self.assertIn("clean.md", rep.kept)
+        self.assertEqual(read(os.path.join(self.root, "src/b.py")), "OWNER = '[PERSON_1]'  # checked\n")
+
+    def test_restore_into_base_never_writes_through_a_symlink(self):
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        outside = os.path.join(self.tmp.name, "outside")
+        os.mkdir(outside)
+        os.symlink(outside, os.path.join(self.base, "docs"))
+        write(os.path.join(self.root, "docs/new.md"), "[PERSON_1]\n")
+        with self.assertRaises(ValueError):
+            restore_tree(self.root, self.map, self.base, into_base=True)
+        self.assertEqual(os.listdir(outside), [])
+
+    def test_verify_flags_a_binary_file_anonymise_left_alone(self):
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        self.assertEqual(verify_tree(self.root, self.map), [("bin.dat", 1)])
+
+    def test_verify_finds_values_of_the_map(self):
+        os.unlink(os.path.join(self.root, "bin.dat"))
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        self.assertEqual(verify_tree(self.root, self.map), [])
+        restore_tree(self.root, self.map, self.base)  # in place: the old, unsafe way
+        found = verify_tree(self.root, self.map)
+        self.assertEqual([rel for rel, _ in found], ["a.txt", "src/b.py"])
+        self.assertEqual(dict(found)["a.txt"], 2)
+
+    def test_verify_finds_a_value_the_agent_wrote(self):
+        os.unlink(os.path.join(self.root, "bin.dat"))
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        write(os.path.join(self.root, "notes/x.md"), "call 44051401359 today\n")
+        self.assertEqual(verify_tree(self.root, self.map), [("notes/x.md", 1)])
+
+    def test_verify_matches_whole_values_only(self):
+        os.unlink(os.path.join(self.root, "bin.dat"))
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        write(os.path.join(self.root, "x.txt"), "1440514013590 Jan Kowalskiego\n")
+        self.assertEqual(verify_tree(self.root, self.map), [])
+
+    def test_verify_does_not_follow_symlinks(self):
+        os.unlink(os.path.join(self.root, "bin.dat"))
+        anonymise_tree(self.root, self.map, self.d, git="strip")
+        outside = os.path.join(self.tmp.name, "outside.txt")
+        write(outside, "Jan Kowalski\n")
+        os.symlink(outside, os.path.join(self.root, "link.txt"))
+        self.assertEqual(verify_tree(self.root, self.map), [])
 
 
 if __name__ == "__main__":

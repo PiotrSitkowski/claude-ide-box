@@ -10,19 +10,19 @@ What is verified automatically, where, and what is not.
 | Integration | `PII_AIRGAP_IMAGE=pii-airgap:spacy tests/integration/run.sh` | Docker or Podman and a built image |
 | Evaluation | `python3 eval/evaluate.py [--ner SPEC]` | the corpus in `eval/`; spaCy for `--ner spacy` |
 
-## Python unit tests (92)
+## Python unit tests (104)
 
 | File | Covers |
 |---|---|
 | `test_validators.py` (16) | every check-digit algorithm with specimen numbers from the specifications, and with one digit changed, wrong lengths, impossible dates |
 | `test_detect.py` (13) | exact spans; bad checksums ignored; digits inside longer numbers ignored; weak checksums only with a context word; national IDs of PL, US, DE, ES, IT, NL; dates of birth only after a birth keyword; addresses in PL/DE/EN; local phone numbers only after "tel."; user lists (whole words, case-insensitive, file format); NER findings merged and losing overlaps to checksums |
-| `test_tokens.py` (18) | same value same token, counters per type, exact text as key; refusal of token-shaped originals; round trip; unknown and ten kinds of altered tokens reported; near misses already in the original ignored; map file 600 in a 700 directory; trees: untouched files restored byte for byte, edits and new files restored, nothing written on a problem, `--keep-unresolved`, refusal on token-shaped text, documents with PII, git metadata at any depth and PII in file names - each leaving the tree unchanged; symlinks never followed |
+| `test_tokens.py` (28) | same value same token, counters per type, exact text as key; refusal of token-shaped originals; round trip; unknown and ten kinds of altered tokens reported; near misses already in the original ignored; map file 600 in a 700 directory; trees: untouched files restored byte for byte, edits and new files restored, nothing written on a problem, `--keep-unresolved`, refusal on token-shaped text, documents with PII, git metadata at any depth and PII in file names - each leaving the tree unchanged; symlinks never followed; restoring to `--out` (an empty folder; the copy keeps its tokens; nothing written on a problem) and `--into-base` (only changed and new files, deletions reported not applied, never through a symlinked directory); `verify` finds values of the map (whole words only, symlinks not followed), also one the agent wrote and one in a binary file `anonymise` left alone |
 | `test_scan.py` (8) | DOCX, XLSX, PDF (when `pdftotext` exists) extraction; binary files; zip bomb refused; report without values, with lines and confidence; cache reused for unchanged files, invalidated by content and by detector configuration, never holding values; symlinks not followed |
 | `test_ner.py` (6) | chunking keeps offsets; GLiNER and spaCy label mapping (with fake models, no download); offsets across chunks; fingerprints differ per model; a missing model directory is an error |
-| `test_cli.py` (9) | text and JSON reports, no value printed, NER warning; `--fail-on-pii`; an unloadable model fails closed with empty stdout; bad list file; anonymise/restore exit codes and messages; documents from a scan report block; `system-prompt` |
+| `test_cli.py` (11) | text and JSON reports, no value printed, NER warning; `--fail-on-pii`; an unloadable model fails closed with empty stdout; bad list file; anonymise/restore exit codes and messages; `restore` needs a destination, `--in-place` warns; `verify` exit 5 with file names and no values; documents from a scan report block; `system-prompt` |
 | `test_rules.py` (22) | rules from the first end-to-end test: person, place and address columns from table headers (CSV, TSV, Markdown inside text, XLSX sheets, quoted cells, a blank line starting a new table, other "name" columns ignored, header cells never findings), CSV files pseudonymised as tables, delimiter sniffing; a model's person match widened over adjacent capitalised words with titles left outside and stopping at punctuation and line ends; company names with legal forms (Polish, German, English) beating a model's partial match, no company without a name; a one-word place at a sentence, line or cell start dropped only when the model does not find it in lower case; a model's match cut at line breaks |
 
-## Shell unit tests (21)
+## Shell unit tests (35)
 
 `tests/run-unit.sh` runs each `test_*` function in a subshell with `set -e`, a private `HOME` and a
 fake `docker` first on `PATH` that records every call. The wrapper is started with `$BASH`, so the
@@ -42,7 +42,7 @@ outside the try root, stops when the scan fails, passes the refusal status throu
 `try-forget`; `system-prompt`; unknown commands; help text carries the "not a compliance tool"
 statement.
 
-## Integration tests (30 with a model, 29 without)
+## Integration tests (46 with a model, 45 without)
 
 `tests/integration/run.sh` uses the real image and engine. It builds fixtures (DOCX, XLSX with
 inline strings, a PDF, a PNG scan rendered from it and a legacy `.doc` converted by LibreOffice
@@ -55,17 +55,24 @@ documents are blanked, tokens in the copy, `.git` removed, no value left, map 60
 root, files keep the host owner; an altered token stops restoration (status 4, file and line,
 nothing written); after fixing it, untouched files equal the snapshot byte for byte and edited and
 new files get the real values; `try-forget`.
+Then the manual flow from the README: `restore` without a destination is refused and the copy keeps
+its tokens; `restore --out` writes the real values to a new folder, the copy still passes `verify`,
+and the new folder is recorded and fails `verify` (5); `--into-base` applies a new file to the
+original; the old `--in-place` warns and `verify` then names the file (never the value). With
+`CLAUDE_IDE_BOX_SRC` pointing at Claude IDE Box sources that have the pre-start check
+(`lib/claude-ide-box/pii.sh`), its wrapper refuses to start in the restored copy and in the
+`--out` folder, and does not refuse the tokenised copy; without them that part says SKIP.
 
 ## Results
 
 | Environment | Result |
 |---|---|
-| Python 3.13, Ubuntu 24.04 (development sandbox) | 70 passed |
-| Shell unit, GNU bash 5.2, with `CLAUDE_IDE_BOX_SRC` | 21 passed |
-| Shell unit, `bash:3.2` image (bash 3.2.57, musl, busybox), with `CLAUDE_IDE_BOX_SRC` | 21 passed |
+| Python 3.13, Ubuntu 24.04 (development sandbox) | 104 passed |
+| Shell unit, GNU bash 5.2, with `CLAUDE_IDE_BOX_SRC` | 35 passed |
+| Shell unit, `bash:3.2` image (bash 3.2.57, musl, busybox), with `CLAUDE_IDE_BOX_SRC` | 35 passed |
 | shellcheck 0.11.0 | clean |
 | Integration, Docker 29.9.2, image `NER=spacy` (1.36 GB) | 30 passed |
-| Integration, Docker 29.9.2, image `NER=none` (0.90 GB) | 29 passed |
+| Integration, Docker 29.9.2, image `NER=none` (0.90 GB) | 29 passed; 45 passed with the restore and pre-start checks (image built on Ubuntu 24.04 with the sandbox's proxy and CA; `CLAUDE_IDE_BOX_SRC` = the Claude IDE Box branch with the check) |
 | Evaluation inside the `spacy` image under `--network none` | identical to the host run |
 | CI (GitHub Actions), run 37 | all jobs green: shellcheck, shell unit on ubuntu, macOS `/bin/bash` 3.2 and `bash:3.2`, Python 3.10/3.12/3.13 and macOS, corpus and scores reproducible, integration with images `none`, `spacy` and `gliner` (30 passed), evaluation inside each image |
 
@@ -98,6 +105,18 @@ three failures - two test bugs and one assertion that depended on the model (spa
 "karta" as an organisation), now checked as "contains the expected types". A review before any
 test caught that the model fingerprint used Python's randomised `hash()`, which would have made
 every cache entry miss.
+
+- restore never in place, `verify` and the copy record (after a leak found in a manual test: a copy
+  restored in place was opened again and sent a contract with a PESEL to the API): 10 new
+  `test_tokens` tests failed to import (`verify_tree`), 3 of the CLI tests failed; 11 of 13 new
+  shell tests failed (the 2 refusal checks passed, as refusals do on a missing feature), then 1 more
+  for the recorded `--out` folder. The new integration section run against `main` (image and
+  wrapper from `main`) failed 13 of its 16 checks and all 3 restore commands it runs -
+  `restore` without a destination silently restored the copy in place, and Claude IDE Box's wrapper
+  started in the restored copy. The 3 checks that passed were the tokens after `anonymise` and two
+  that a missing feature also passes. All of them pass on the branch (45 of 45 in the suite). Writing it also showed that
+  `anonymise` leaves a value in a binary file it cannot read (the fixture's `bin.dat`): `verify`
+  reports it, so Claude IDE Box refuses such a copy until the file is masked or removed.
 
 ## Not tested, and why
 

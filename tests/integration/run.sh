@@ -176,5 +176,66 @@ check "try-restore: new file restored" grep -qx 'Owner: Jan Kowalski / 440514013
 "$PA" try-forget "$P" 2>/dev/null
 check "try-forget: map deleted" test ! -e "$MAP"
 
+# ------------------------------------------------------------ manual flow: a restored folder is never
+# opened again. anonymise -> restore must not put real values back into the copy, and Claude IDE Box
+# (when its sources with the check are in CLAUDE_IDE_BOX_SRC) must refuse to start in any folder that
+# holds values of a recorded map.
+O="$T/orig"
+mkdir -p "$O"
+printf 'Umowa\nKlient PESEL 44051401359\n' >"$O/umowa.txt"
+cp -R "$O" "$T/copyA"
+"$PA" anonymise "$T/copyA" --map "$T/private/a.json" >/dev/null 2>&1 || bad "anonymise copyA"
+check "manual: the copy holds tokens" grep -qx 'Klient PESEL \[PESEL_1\]' "$T/copyA/umowa.txt"
+check "manual: verify passes on the tokenised copy" "$PA" verify "$T/copyA"
+set +e
+"$PA" restore "$T/copyA" --map "$T/private/a.json" >"$T/r.out" 2>&1
+rc=$?
+set -e
+check "manual: restore without a destination is refused" test "$rc" != 0
+check "manual: ... and the copy keeps its tokens" grep -qx 'Klient PESEL \[PESEL_1\]' "$T/copyA/umowa.txt"
+# The work: a new file with a token, then restore to a new folder.
+printf 'Notatka dla [PESEL_1]\n' >"$T/copyA/notatka.txt"
+"$PA" restore "$T/copyA" --map "$T/private/a.json" --base "$O" --out "$T/outA" >/dev/null 2>&1 || bad "restore --out"
+check "manual: restore --out writes the real values to the new folder" grep -qx 'Notatka dla 44051401359' "$T/outA/notatka.txt"
+check "manual: after restore --out the copy still holds no value of the map" "$PA" verify "$T/copyA"
+check "manual: ... and still has its tokens" grep -qx 'Notatka dla \[PESEL_1\]' "$T/copyA/notatka.txt"
+set +e
+"$PA" verify "$T/outA" >"$T/v.out" 2>&1
+rc=$?
+set -e
+check "manual: the restored folder is recorded and fails verify (status 5)" test "$rc" = 5
+"$PA" restore "$T/copyA" --map "$T/private/a.json" --base "$O" --into-base >/dev/null 2>&1 || bad "restore --into-base"
+check "manual: restore --into-base applies the new file to the original" grep -qx 'Notatka dla 44051401359' "$O/notatka.txt"
+check "manual: ... and the copy still holds no value of the map" "$PA" verify "$T/copyA"
+# The old way, still possible, now caught.
+cp -R "$O" "$T/copyB"
+rm -f "$T/copyB/notatka.txt"
+"$PA" anonymise "$T/copyB" --map "$T/private/b.json" >/dev/null 2>&1 || bad "anonymise copyB"
+"$PA" restore "$T/copyB" --map "$T/private/b.json" --in-place >"$T/r.out" 2>&1 || bad "restore --in-place"
+check "manual: restore --in-place warns" grep -q "must not be opened" "$T/r.out"
+set +e
+"$PA" verify "$T/copyB" >"$T/v.out" 2>/dev/null
+rc=$?
+set -e
+check "manual: verify finds real values after an in-place restore (status 5)" test "$rc" = 5
+check "manual: verify names the file, not the value" sh -c 'grep -q "^umowa.txt" "$1" && ! grep -q 44051401359 "$1"' _ "$T/v.out"
+CIB="${CLAUDE_IDE_BOX_SRC:-}"
+if [ -n "$CIB" ] && [ -f "$CIB/lib/claude-ide-box/pii.sh" ]; then
+  for d in copyB outA; do
+    set +e
+    (cd "$T/$d" && CLAUDE_IDE_BOX_INSTANCE=piiit "$CIB/bin/claude-ide-box-exec" --version) >"$T/w.out" 2>"$T/w.err"
+    rc=$?
+    set -e
+    check "Claude IDE Box refuses to start in $d (restored values)" sh -c '[ "$1" != 0 ] && [ ! -s "$2" ] && grep -q "refusing to start" "$3"' _ "$rc" "$T/w.out" "$T/w.err"
+  done
+  set +e
+  (cd "$T/copyA" && CLAUDE_IDE_BOX_INSTANCE=piiit "$CIB/bin/claude-ide-box-exec" --version) >/dev/null 2>"$T/w.err"
+  set -e
+  # Without Claude IDE Box's images the start fails later; it must not be the PII refusal.
+  check "Claude IDE Box does not refuse the tokenised copy" sh -c '! grep -q "refusing to start" "$1"' _ "$T/w.err"
+else
+  echo "SKIP Claude IDE Box pre-start check (set CLAUDE_IDE_BOX_SRC to a checkout with lib/claude-ide-box/pii.sh)"
+fi
+
 echo "$pass passed, $failn failed"
 [ "$failn" -eq 0 ]

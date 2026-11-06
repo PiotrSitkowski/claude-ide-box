@@ -55,7 +55,7 @@ relying on it.
 |---|---|
 | `pii-airgap scan` | which files hold which kinds of personal data, with a confidence per finding. Plain text, DOCX/XLSX/PPTX, OpenDocument, PDF, scans (OCR in Polish, English and German) and legacy Office formats. Cached by file content hash; neither the cache nor the report ever contains a detected value - only type, line, confidence and a masked preview |
 | `pii-airgap mask-add FILE...` | adds files to Claude IDE Box's masks for the project (in `~/.config/claude-ide-box/projects/<container>.conf`, never in the project), so the agent's container sees them as empty files |
-| `pii-airgap anonymise` / `restore` | replaces values with `[TYPE_N]` tokens in a copy and puts them back later. The token map stays on the host (mode 600) and is never mounted into the agent's container. Restoration is strict: only exact, known tokens are replaced; unknown or altered tokens are reported and nothing is guessed |
+| `pii-airgap anonymise` / `restore` | replaces values with `[TYPE_N]` tokens in a copy and later writes the real values to a new folder or into the original - never back into the copy the agent works in. The token map stays on the host (mode 600) and is never mounted into the agent's container. Restoration is strict: only exact, known tokens are replaced; unknown or altered tokens are reported and nothing is guessed |
 | `pii-airgap try-prepare` / `try-restore` | the same for the copy of a `claude-ide-box up --try` session |
 
 Everything runs in a throw-away container with `--network none`, a read-only root file system, no
@@ -180,14 +180,39 @@ cd ~/work/some-project && pii-airgap scan
 pii-airgap scan --json > report.json  # machine-readable; --fail-on-pii exits 3 when anything is found
 ```
 
-Pseudonymise a copy and restore it later (in place - never run it on your only copy):
+Pseudonymise a copy, work on it, and restore the result **somewhere else** (`anonymise` works in
+place - never run it on your only copy):
 
 ```sh
 cp -R project /tmp/project-copy
 pii-airgap anonymise /tmp/project-copy --map ~/private/project.map.json --git strip
-# ... work on /tmp/project-copy ...
-pii-airgap restore /tmp/project-copy --map ~/private/project.map.json --base project
+# ... work on /tmp/project-copy with the agent ...
+pii-airgap restore /tmp/project-copy --map ~/private/project.map.json --base project --out /tmp/project-restored
 ```
+
+`restore` never touches the copy: `--out DIR` writes the restored files to a new, empty folder, and
+`--base ORIGINAL --into-base` applies the changes to the original instead (changed and new files are
+written; files deleted in the copy are reported and left in place). The copy keeps its tokens, so it
+stays the only folder the agent should ever see.
+
+> [!CAUTION]
+> **Never open a restored folder with an AI agent.** The `--out` folder and the original hold real
+> personal data; opening either in Claude, an IDE agent or any other assistant sends that data to the
+> provider, exactly what pseudonymisation was meant to prevent. Keep working in the tokenised copy,
+> and restore again when you need the real text. `restore --in-place` still exists for scripts, but
+> it prints a warning: the copy itself holds real values afterwards and must not be opened with an
+> agent again.
+
+`anonymise` records the copy (path, token map and its fingerprint) in
+`~/.local/state/pii-airgap/copies`, and `restore --out` records the folder it writes the same way. Claude IDE Box reads that record before it starts a container:
+when the project is a recorded copy, lies inside one or contains one, it runs `pii-airgap verify`'s
+check without network and refuses to start if the folder holds values of its map in clear text (a
+restored folder always does; a copy after an in-place restore or when the agent wrote a value
+itself), or if the map is gone or was replaced. The original given to `--into-base` is not recorded:
+it is your own folder, protected by its masks as before.
+`pii-airgap verify COPY` runs the same check by hand; `pii-airgap forget-copy COPY` deletes the
+record once the copy is gone. The check also catches files `anonymise` cannot rewrite but that still
+hold a known value (a binary file of unknown type, for example) - mask or remove those.
 
 `anonymise` refuses (exit 3, nothing changed) when it would be unsafe: git metadata (its history
 holds the original values and cannot be rewritten), a document with personal data that it cannot

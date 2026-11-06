@@ -43,9 +43,22 @@ Usage: pii-airgap <command> [arguments]
                         ~/.config/claude-ide-box/projects/<container>.conf)
   anonymise DIR --map FILE [--git strip]
                         replace personal data in DIR by [TYPE_N] tokens, in
-                        place (use it on a copy); FILE keeps the token map
-  restore DIR --map FILE [--base ORIGINAL] [--keep-unresolved]
-                        put real values back for exact, known tokens only
+                        place (use it on a copy); FILE keeps the token map.
+                        The copy is recorded so that Claude IDE Box can check
+                        it before every start
+  restore COPY --map FILE (--out NEW_DIR | --base ORIGINAL --into-base)
+          [--base ORIGINAL] [--keep-unresolved]
+                        put real values back for exact, known tokens only:
+                        into a new folder, or into the original as applied
+                        changes. The copy keeps its tokens; never open the
+                        restored result with an AI agent
+  restore COPY --map FILE --in-place
+                        the old behaviour, with a warning: the copy holds real
+                        values afterwards and Claude IDE Box refuses it
+  verify COPY [--map FILE]
+                        list files of COPY that hold values of its token map in
+                        clear text (exit 5); the map defaults to the recorded one
+  forget-copy COPY      delete the record of COPY (after deleting the copy)
   try-prepare DIR       pseudonymise the 'claude-ide-box up --try' copy of DIR
   try-restore DIR [--keep-unresolved]
                         restore real values in that copy before 'try apply'
@@ -242,6 +255,62 @@ private_dir() {
 }
 
 # --------------------------------------------------------------------------
+# Record of pseudonymised copies
+#
+# $PA_STATE_DIR/copies/<hash of the path>.copy, KEY=VALUE lines (parsed, never
+# sourced). Claude IDE Box reads these before it starts a container: when the
+# project is, contains or lies inside a recorded copy, it runs `verify` with
+# the recorded image and map, and refuses to start if the copy holds values
+# of the map in clear text (or if it cannot check). Keep the format stable.
+#
+#   kind=copy|restored    (restored: written by restore --out, real values)
+#   path=/abs/copy        physical=/abs/copy/without/symlinks
+#   map=/abs/map.json     map_sha256=<sha256 of the map file>
+#   image=pii-airgap:latest
+# --------------------------------------------------------------------------
+
+PA_COPIES_DIR="$PA_STATE_DIR/copies"
+
+record_file() {
+  printf '%s/%s.copy\n' "$PA_COPIES_DIR" "$(printf '%s' "$1" | sha256 | cut -c1-16)"
+}
+
+record_value() {
+  sed -n "s/^$2=//p" "$1" | head -n 1
+}
+
+# record_copy DIR MAPFILE [KIND] - record DIR as a pseudonymised copy (KIND
+# copy) or as a folder restored from one (KIND restored, holding real values
+# on purpose), and refresh the map fingerprint of every record that uses the
+# same map.
+record_copy() {
+  local dir="$1" map="$2" kind="${3:-copy}" sum f tmp
+  [ -f "$map" ] || die "anonymise finished but there is no token map at $map"
+  sum="$(sha256 <"$map")"
+  private_dir "$PA_COPIES_DIR"
+  for f in "$PA_COPIES_DIR"/*.copy; do
+    [ -f "$f" ] || continue
+    if [ "$(record_value "$f" map)" = "$map" ]; then
+      tmp="$f.tmp.$$"
+      sed "s/^map_sha256=.*/map_sha256=$sum/" "$f" >"$tmp" && mv "$tmp" "$f"
+    fi
+  done
+  f="$(record_file "$dir")"
+  tmp="$f.tmp.$$"
+  {
+    echo "# pii-airgap: pseudonymised copy or restored folder. Claude IDE Box checks it before every start."
+    echo "kind=$kind"
+    echo "path=$dir"
+    echo "physical=$(cd -P "$dir" && pwd -P)"
+    echo "map=$map"
+    echo "map_sha256=$sum"
+    echo "image=$PA_IMAGE"
+  } >"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$f"
+}
+
+# --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
 
@@ -313,19 +382,40 @@ cmd_try_prepare() {
   pseudonymise "$root/work" "$dir" "$PA_STATE_DIR/try" "$name.map.json"
 }
 
+# restore COPY DST BASE MAPDIR MAPNAME MODE [OUT] -- ARGS...
+#   MODE out:       COPY read-only, restored tree written to OUT
+#   MODE into-base: COPY read-only, changed files written into BASE
+#   MODE in-place:  COPY itself restored (try sessions; --in-place)
 restore() {
-  local work="$1" dst="$2" base="$3" mapdir="$4" mapname="$5" rc=0
-  shift 5
+  local work="$1" dst="$2" base="$3" mapdir="$4" mapname="$5" mode="$6" out="${7:-}" rc=0
+  shift 7
   [ -f "$mapdir/$mapname" ] || die "no token map at $mapdir/$mapname; nothing to restore"
   require_engine
   MOUNTS=()
-  mount_rw "$work" "$dst"
-  [ -z "$base" ] || mount_ro "$base" /base
+  local -a dest
+  case "$mode" in
+    out)
+      mount_ro "$work" "$dst"
+      mount_rw "$out" /out
+      dest=(--out /out)
+      [ -z "$base" ] || mount_ro "$base" /base
+      ;;
+    into-base)
+      mount_ro "$work" "$dst"
+      mount_rw "$base" /base
+      dest=(--into-base)
+      ;;
+    in-place)
+      mount_rw "$work" "$dst"
+      dest=(--in-place)
+      [ -z "$base" ] || mount_ro "$base" /base
+      ;;
+  esac
   mount_ro "$mapdir" /state
   if [ -n "$base" ]; then
-    run_container restore "$dst" --map "/state/$mapname" --base /base "$@" || rc=$?
+    run_container restore "$dst" --map "/state/$mapname" --base /base "${dest[@]}" "$@" || rc=$?
   else
-    run_container restore "$dst" --map "/state/$mapname" "$@" || rc=$?
+    run_container restore "$dst" --map "/state/$mapname" "${dest[@]}" "$@" || rc=$?
   fi
   return "$rc"
 }
@@ -339,7 +429,7 @@ cmd_try_restore() {
   root="$(try_root "$dir")"
   name="$(container_name "$dir")"
   check_mount_path "$dir"
-  restore "$root/work" "$dir" "$root/base" "$PA_STATE_DIR/try" "$name.map.json" "$@"
+  restore "$root/work" "$dir" "$root/base" "$PA_STATE_DIR/try" "$name.map.json" in-place "" "$@"
 }
 
 cmd_try_forget() {
@@ -378,25 +468,103 @@ cmd_anonymise() {
     die "$dir has git metadata, whose history holds the original values; work on a copy and pass --git strip"
   fi
   pseudonymise "$dir" "$dir" "$MAP_DIR" "$MAP_NAME"
+  record_copy "$dir" "$MAP_DIR/$MAP_NAME"
 }
 
 cmd_restore() {
-  local dir="" map="" base="" extra=()
+  local dir="" map="" base="" out="" mode="" extra=()
+  local usage="usage: pii-airgap restore COPY --map FILE (--out NEW_DIR | --base ORIGINAL --into-base | --in-place) [--base ORIGINAL] [--keep-unresolved]"
   while [ $# -gt 0 ]; do
     case "$1" in
       --map) [ $# -ge 2 ] || die "--map needs a file"; map="$2"; shift 2 ;;
       --base) [ $# -ge 2 ] || die "--base needs a directory"; base="$(project_dir "$2")"; shift 2 ;;
+      --out) [ $# -ge 2 ] || die "--out needs a directory"; [ -z "$mode" ] || die "choose one of --out, --into-base, --in-place"; out="$(abs_path "$2")"; mode=out; shift 2 ;;
+      --into-base) [ -z "$mode" ] || die "choose one of --out, --into-base, --in-place"; mode=into-base; shift ;;
+      --in-place) [ -z "$mode" ] || die "choose one of --out, --into-base, --in-place"; mode=in-place; shift ;;
       --keep-unresolved) extra+=(--keep-unresolved); shift ;;
       -*) die "unknown option $1" ;;
       *) [ -z "$dir" ] || die "one directory only"; dir="$1"; shift ;;
     esac
   done
-  [ -n "$dir" ] && [ -n "$map" ] || die "usage: pii-airgap restore DIR --map FILE [--base DIR] [--keep-unresolved]"
+  [ -n "$dir" ] && [ -n "$map" ] || die "$usage"
+  if [ -z "$mode" ]; then
+    die "restore needs a destination. The copy is where the agent worked and must keep its tokens:
+  --out NEW_DIR               write the restored files to a new, empty folder
+  --base ORIGINAL --into-base apply the changes to the original folder
+  --in-place                  restore the copy itself (unsafe: it then holds real values and
+                              must never be opened with an AI agent again)"
+  fi
   dir="$(project_dir "$dir")"
   check_mount_path "$dir"
   [ -z "$base" ] || check_mount_path "$base"
   map_location "$map"
-  restore "$dir" "$dir" "$base" "$MAP_DIR" "$MAP_NAME" ${extra[@]+"${extra[@]}"}
+  case "$mode" in
+    out)
+      check_mount_path "$out"
+      if inside "$dir" "$out" || inside "$out" "$dir"; then
+        die "--out $out must be outside the copy $dir (and not contain it)"
+      fi
+      if [ -n "$base" ] && { inside "$base" "$out" || inside "$out" "$base"; }; then
+        die "--out $out must be a new folder, not the original or inside it (use --into-base to apply the changes to it)"
+      fi
+      if [ -e "$out" ] || [ -L "$out" ]; then
+        [ -d "$out" ] && [ ! -L "$out" ] && [ -z "$(ls -A "$out")" ] || die "--out $out exists and is not an empty folder"
+      else
+        mkdir -p "$out" || die "cannot create $out"
+      fi
+      ;;
+    into-base)
+      [ -n "$base" ] || die "--into-base needs --base ORIGINAL"
+      if inside "$dir" "$base" || inside "$base" "$dir"; then
+        die "the original $base and the copy $dir must not contain each other"
+      fi
+      ;;
+  esac
+  local rc=0
+  restore "$dir" "$dir" "$base" "$MAP_DIR" "$MAP_NAME" "$mode" "$out" ${extra[@]+"${extra[@]}"} || rc=$?
+  if [ "$mode" = out ] && [ "$rc" -eq 0 ]; then
+    # The new folder holds real values: Claude IDE Box refuses to start in it.
+    record_copy "$out" "$MAP_DIR/$MAP_NAME" restored
+    say "$out holds the real values; do not open it with an AI agent (Claude IDE Box refuses to start in it)."
+  fi
+  if [ "$mode" = in-place ] && [ "$rc" -eq 0 ]; then
+    say "WARNING: $dir now holds real personal data again. It must not be opened with an AI agent"
+    say "any more (Claude IDE Box refuses to start in it). Next time use --out NEW_DIR or --into-base."
+  fi
+  return "$rc"
+}
+
+cmd_verify() {
+  local dir="" map="" rec
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --map) [ $# -ge 2 ] || die "--map needs a file"; map="$2"; shift 2 ;;
+      -*) die "unknown option $1" ;;
+      *) [ -z "$dir" ] || die "one directory only"; dir="$1"; shift ;;
+    esac
+  done
+  [ -n "$dir" ] || die "usage: pii-airgap verify COPY [--map FILE]"
+  dir="$(project_dir "$dir")"
+  check_mount_path "$dir"
+  if [ -z "$map" ]; then
+    rec="$(record_file "$dir")"
+    [ -f "$rec" ] || die "$dir is not a recorded copy; pass --map FILE"
+    map="$(record_value "$rec" map)"
+  fi
+  map="$(abs_path "$map")"
+  [ -f "$map" ] || die "no token map at $map"
+  check_mount_path "$map"
+  require_engine
+  MOUNTS=()
+  mount_ro "$dir" "$dir"
+  mount_ro "$map" /map.json
+  run_container verify "$dir" --map /map.json
+}
+
+cmd_forget_copy() {
+  [ $# -eq 1 ] || die "usage: pii-airgap forget-copy COPY"
+  rm -f "$(record_file "$(abs_path "$1")")"
+  say "record of the pseudonymised copy $(abs_path "$1") deleted"
 }
 
 cmd_mask_add() {
@@ -499,6 +667,8 @@ main() {
     mask-add) cmd_mask_add "$@" ;;
     anonymise | anonymize) cmd_anonymise "$@" ;;
     restore) cmd_restore "$@" ;;
+    verify) cmd_verify "$@" ;;
+    forget-copy) cmd_forget_copy "$@" ;;
     try-prepare) cmd_try_prepare "$@" ;;
     try-restore) cmd_try_restore "$@" ;;
     try-forget) cmd_try_forget "$@" ;;

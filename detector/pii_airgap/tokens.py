@@ -284,15 +284,62 @@ def anonymise_tree(root, map_path, detector, git="refuse", documents_with_pii=()
     return rep
 
 
-def restore_tree(root, map_path, base=None, keep_unresolved=False):
+def _check_dir_chain(top, rel_dir):
+    """Every directory from top down to top/rel_dir that exists must be a real
+    directory, not a symlink: a write below it would land elsewhere."""
+    cur = top
+    for part in [p for p in rel_dir.split("/") if p]:
+        cur = os.path.join(cur, part)
+        try:
+            st = os.lstat(cur)
+        except FileNotFoundError:
+            return
+        if not stat.S_ISDIR(st.st_mode):
+            raise ValueError("%s is a symlink or not a directory; refusing to write below it" % cur)
+
+
+def _write_new(path, data, mode):
+    """Create path (it must not exist) without following symlinks."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.chmod(path, stat.S_IMODE(mode))
+
+
+def _read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def restore_tree(root, map_path, base=None, keep_unresolved=False, out=None, into_base=False):
+    """Put real values back for exact, known tokens.
+
+    Where the result goes:
+      out=DIR         a full restored tree in DIR, which must be empty; root keeps its tokens
+      into_base=True  changed and new files written into base (the original); root keeps
+                      its tokens; files missing from root are left in base and reported
+      neither         root itself, in place (a restored copy holds real values and must
+                      never be opened with an agent again)
+    Nothing is written when a token problem is found, unless keep_unresolved."""
+    if out is not None and into_base:
+        raise ValueError("choose one destination: out or into_base")
+    if into_base and base is None:
+        raise ValueError("into_base needs base")
+    if out is not None:
+        if not os.path.isdir(out) or os.path.islink(out):
+            raise ValueError("%s is not a directory" % out)
+        if os.listdir(out):
+            raise ValueError("%s is not empty" % out)
     tmap = TokenMap.load(map_path)
     files, _, links = _walk(root)
     rep = Report()
-    planned = []
+    rep.kept = []
+    planned = []  # (rel, src path, new bytes or None to copy as is)
     for rel, path in files:
         text, why = _read_text(path)
         if text is None:
             rep.skipped.append((rel, why))
+            planned.append((rel, path, None))
             continue
         baseline = None
         if base is not None:
@@ -303,13 +350,94 @@ def restore_tree(root, map_path, base=None, keep_unresolved=False):
         for p in problems:
             p.path = rel
         rep.problems.extend(problems)
-        if new != text:
-            planned.append((rel, path, new))
+        planned.append((rel, path, new.encode("utf-8") if new != text else None))
     rep.skipped.extend((l, "symlink") for l in links)
     if rep.problems and not keep_unresolved:
         return rep
-    for rel, path, new in planned:
-        _write_atomic(path, new)
+    if out is None and not into_base:
+        for rel, path, data in planned:
+            if data is not None:
+                _write_atomic(path, data.decode("utf-8"))
+                rep.changed.append(rel)
+        rep.written = True
+        return rep
+    if out is not None:
+        for rel, path, data in planned:
+            d = os.path.dirname(rel)
+            if d:
+                _check_dir_chain(out, d)
+                os.makedirs(os.path.join(out, d), exist_ok=True)
+            _write_new(os.path.join(out, rel), _read_bytes(path) if data is None else data,
+                       os.lstat(path).st_mode)
+            if data is not None:
+                rep.changed.append(rel)
+        rep.written = True
+        return rep
+    # into_base: plan and check every write first, then write.
+    writes = []
+    for rel, path, data in planned:
+        content = _read_bytes(path) if data is None else data
+        bp = os.path.join(base, rel)
+        _check_dir_chain(base, os.path.dirname(rel))
+        if os.path.lexists(bp):
+            st = os.lstat(bp)
+            if not stat.S_ISREG(st.st_mode):
+                raise ValueError("%s in the original is a symlink or not a file; refusing to replace it" % rel)
+            if _read_bytes(bp) == content:
+                continue
+        writes.append((rel, bp, content, os.lstat(path).st_mode))
+    in_root = set(rel for rel, _, _ in planned)
+    base_files, _, _ = _walk(base)
+    rep.kept = sorted(rel for rel, _ in base_files if rel not in in_root)
+    for rel, bp, content, mode in writes:
+        d = os.path.dirname(bp)
+        os.makedirs(d, exist_ok=True)
+        if os.path.lexists(bp):
+            tmp = os.path.join(d, ".pii-airgap.%d.tmp" % os.getpid())
+            _write_new(tmp, content, os.lstat(bp).st_mode)
+            os.replace(tmp, bp)
+        else:
+            _write_new(bp, content, mode)
         rep.changed.append(rel)
     rep.written = True
     return rep
+
+
+def _value_patterns(tmap):
+    """One bytes regex matching any value of the map as a whole word, in UTF-8
+    and, where it differs, in cp1250 (legacy Polish text files)."""
+    alts = set()
+    for value in tmap.tokens.values():
+        if not value.strip():
+            continue
+        for enc in ("utf-8", "cp1250"):
+            try:
+                alts.add(value.encode(enc))
+            except UnicodeEncodeError:
+                pass
+    if not alts:
+        return None
+    body = b"|".join(re.escape(a) for a in sorted(alts, key=len, reverse=True))
+    # Not part of a longer word or number: no ASCII letter or digit and no
+    # non-ASCII byte right before or after.
+    return re.compile(b"(?<![A-Za-z0-9\x80-\xff])(?:" + body + b")(?![A-Za-z0-9\x80-\xff])")
+
+
+def verify_tree(root, map_path):
+    """[(rel, count)] of regular files below root that contain values of the
+    map in clear text. Symlinks are not followed; .git is searched too."""
+    tmap = TokenMap.load(map_path)
+    rx = _value_patterns(tmap)
+    if rx is None:
+        return []
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if not os.path.islink(os.path.join(dirpath, d)))
+        for n in sorted(filenames):
+            p = os.path.join(dirpath, n)
+            if not stat.S_ISREG(os.lstat(p).st_mode):
+                continue
+            hits = len(rx.findall(_read_bytes(p)))
+            if hits:
+                found.append((os.path.relpath(p, root).replace(os.sep, "/"), hits))
+    return sorted(found)
