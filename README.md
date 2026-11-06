@@ -47,6 +47,7 @@ relying on it.
 - [Updating Claude Code](#updating-claude-code)
 - [Troubleshooting](#troubleshooting)
 - [Uninstall](#uninstall)
+- [Ecosystem](#ecosystem)
 - [Development](#development)
 
 ## How it works
@@ -310,6 +311,27 @@ was made is a conflict. `try apply` then writes nothing and lists them; resolve 
 and keep the copy for the rest. A change you made that Claude did not touch is always kept.
 Executable bits are applied; other permission changes are not.
 
+### Pseudonymised copies (`--pseudonymise`)
+
+With [pii-airgap](#ecosystem) installed, `claude-ide-box up --try --pseudonymise` replaces personal
+data in the copy with tokens such as `[PERSON_1]` or `[IBAN_1]` before the container starts, and
+puts the real values back before `try diff`, `try apply` or `try end` compare anything:
+
+- the copy is scanned and rewritten by pii-airgap in its own container without network; the token
+  map stays on the host, outside the copy and outside anything the project container can see;
+- documents it cannot rewrite in place (DOCX, PDF, scans) stop the start; mask them first
+  (`claude-ide-box pii mask-add FILE`, then start again);
+- `.git` is removed from the copy (its history holds the original values), so git commands do not
+  work in such a session; the project's own `.git` is untouched, as in every try session;
+- Claude gets an appended system prompt telling it to keep tokens exactly as they are;
+- restoration replaces only exact, known tokens. An altered or invented token stops `try apply`
+  with the file and line, and nothing is applied;
+- after `try diff` the copy holds real values again: the container is stopped and is not started
+  until `claude-ide-box up --try` has pseudonymised the copy again.
+
+No detector finds everything: what pii-airgap misses reaches the API in clear text. This lowers
+exposure; it is not a compliance tool.
+
 ## What runs in the box
 
 Claude IDE Box is not tied to one language. The **base image** is a general Linux workstation for
@@ -499,6 +521,18 @@ Set `CLAUDE_IDE_BOX_DEBUG=1` to mirror the wrapper log on stderr.
 
 restores the extension binaries (`guard --undo`) and removes the scripts. It prints the commands to
 remove the config, the Docker containers, volumes and networks, which it leaves in place on purpose.
+
+## Ecosystem
+
+Optional companion tools. They are separate projects with their own images; nothing here is part
+of the Claude IDE Box base image.
+
+| Project | What it adds | Commands |
+|---|---|---|
+| [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap) | air-gapped PII detector and reversible pseudonymiser: reports which files hold personal data, adds them to masks, and runs try sessions on a tokenised copy | `claude-ide-box pii scan`, `claude-ide-box pii mask-add FILE`, `claude-ide-box up --try --pseudonymise` |
+
+`claude-ide-box pii ...` runs `pii-airgap` from `PATH` (or `CLAUDE_IDE_BOX_PII`) with the same
+arguments.
 
 ## Development
 

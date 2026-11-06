@@ -88,14 +88,71 @@ EOF
   printf '%s\n' "$root" >"$CB_TRY_MARK"
 }
 
+# --------------------------------------------------------------------------
+# Pseudonymised sessions (up --try --pseudonymise), with the external
+# pii-airgap tool. $CB_TRY_ROOT/pii is "tokens" while the copy carries
+# [TYPE_N] tokens instead of personal data, "restored" once the real values
+# were put back for diff or apply; a restored copy is never mounted again
+# until it has been pseudonymised again. The token map stays with
+# pii-airgap on the host; nothing of it is in the try root or the copy.
+# --------------------------------------------------------------------------
+
+try_pii_tool() {
+  local t="${CLAUDE_IDE_BOX_PII:-pii-airgap}"
+  command -v "$t" 2>/dev/null || cb_die "pii-airgap is not installed (see 'Ecosystem' in the README); nothing was started"
+}
+
+try_pii_state() {
+  cat "$CB_TRY_ROOT/pii" 2>/dev/null || true
+}
+
+# try_pii_prepare - pseudonymise the copy; the caller fails closed.
+try_pii_prepare() {
+  local tool
+  tool="$(try_pii_tool)"
+  say "pseudonymising the copy with $tool (scan, then tokens; this can take a while)"
+  "$tool" try-prepare "$CB_PROJECT_DIR" >&2 || return 1
+  "$tool" system-prompt >"$CB_TRY_ROOT/pii-prompt.tmp" || return 1
+  mv "$CB_TRY_ROOT/pii-prompt.tmp" "$CB_TRY_ROOT/pii-prompt"
+  printf 'tokens\n' >"$CB_TRY_ROOT/pii"
+}
+
+# try_pii_restore - after the container is stopped: real values back into
+# the copy, so diff and apply compare and write real text.
+try_pii_restore() {
+  [ "$(try_pii_state)" = tokens ] || return 0
+  local tool
+  tool="$(try_pii_tool)"
+  say "restoring real values in the copy ($tool try-restore)"
+  "$tool" try-restore "$CB_PROJECT_DIR" >&2 ||
+    cb_die "real values could not be restored (see above); nothing was applied. Fix the tokens in $CB_TRY_ROOT/work, or see 'pii-airgap help' for --keep-unresolved."
+  printf 'restored\n' >"$CB_TRY_ROOT/pii"
+}
+
 cmd_up_try() {
+  local pseudonymise="${1:-0}"
   if [ "$CB_TRY" = 1 ]; then
+    case "$(try_pii_state)" in
+      "")
+        [ "$pseudonymise" = 0 ] ||
+          cb_die "this try session was started without --pseudonymise and Claude has seen the copy in clear text; 'claude-ide-box try discard' it first"
+        ;;
+      restored)
+        try_pii_prepare || cb_die "pseudonymising the copy failed; the session's container was not started"
+        ;;
+    esac
     say "resuming the try session: Claude keeps working on the copy in $CB_MOUNT_SRC"
   else
     cb_require_docker
     cb_require_engine
+    [ "$pseudonymise" = 0 ] || try_pii_tool >/dev/null
     try_create
     cb_try_select
+    if [ "$pseudonymise" = 1 ] && ! try_pii_prepare; then
+      rm -rf "$CB_TRY_ROOT"
+      rm -f "$CB_TRY_MARK"
+      cb_die "the copy could not be pseudonymised (see above); it was removed and nothing was started"
+    fi
   fi
   cb_ensure_container
   say "$CB_NAME is running for $CB_PROJECT_DIR on a throw-away copy."
@@ -378,6 +435,10 @@ try_stop_container() {
 }
 
 try_cleanup() {
+  if [ -n "$(try_pii_state)" ]; then
+    "${CLAUDE_IDE_BOX_PII:-pii-airgap}" try-forget "$CB_PROJECT_DIR" >/dev/null 2>&1 ||
+      cb_warn "could not delete the token map ('pii-airgap try-forget $CB_PROJECT_DIR')"
+  fi
   cb_docker volume rm "$CB_VOLUME" >/dev/null 2>&1 || true
   rm -rf "$CB_TRY_ROOT"
   rm -f "$CB_TRY_MARK"
@@ -387,6 +448,7 @@ try_cleanup() {
 try_apply() {
   local skip="$1" action rel failed="" kept="" conflicts=""
   try_stop_container
+  try_pii_restore
   try_plan
   while IFS="$CB_TAB" read -r action rel; do
     [ "$action" != conflict ] || conflicts="$conflicts
@@ -455,9 +517,17 @@ cmd_try() {
       say "copy:      $CB_MOUNT_SRC"
       say "container: $CB_NAME"
       say "changes:   $TRY_CHANGES, conflicts: $TRY_CONFLICTS, not applicable: $TRY_SKIPPED"
+      [ -z "$(try_pii_state)" ] || say "pseudonymised: $(try_pii_state) (pii-airgap)"
       ;;
     diff)
       try_require_session
+      if [ "$(try_pii_state)" = tokens ]; then
+        # The diff has to be in real text: stop Claude, restore, compare.
+        cb_find_docker
+        try_stop_container
+        try_pii_restore
+        say "the session's container was stopped; 'claude-ide-box up --try' pseudonymises the copy again and continues"
+      fi
       try_plan
       try_show
       ;;
@@ -483,6 +553,7 @@ cmd_try() {
       try_require_session
       cb_find_docker
       try_stop_container
+      try_pii_restore
       try_plan
       try_show
       say ""

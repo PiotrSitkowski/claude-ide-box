@@ -1148,6 +1148,11 @@ cb_container_busy() {
 # configuration. Must be called with stdout pointing away from the IDE.
 cb_ensure_container() {
   local image image_id hash state running label
+  # A pseudonymised try copy whose real values were restored (for diff or
+  # apply) must not be shown to Claude again before pii-airgap re-tokenises it.
+  if [ "$CB_TRY" = 1 ] && [ "$(cat "$CB_TRY_ROOT/pii" 2>/dev/null || true)" = restored ]; then
+    cb_die "the try copy holds real values again (restored for diff/apply); run 'claude-ide-box up --try' to pseudonymise it before Claude continues"
+  fi
   cb_require_profiles "$CFG_PROFILE"
   image="$(cb_image_for_profile "$CFG_PROFILE")"
 
