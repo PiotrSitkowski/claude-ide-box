@@ -27,9 +27,18 @@ programmers' editors, but nothing in the workflow requires programming:
 
 The user keeps opening the same files in Word, Excel or LibreOffice on their computer.
 
+> [!TIP]
+> **Recommended for client data: [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap).** The box limits what Claude can reach, but
+> every document Claude reads is sent to the API. pii-airgap runs on the same computer, with a
+> local model and no network: `pii-airgap scan` lists which documents hold personal data (names,
+> IBANs, PESEL, NIP, ID numbers, addresses), `pii-airgap mask-add FILE` hides whole documents from
+> Claude, and `claude-ide-box up --try --pseudonymise` lets Claude work on a copy where personal
+> data is replaced by tokens such as `[PERSON_1]` and put back afterwards. It reduces what is sent;
+> it is not GDPR compliance, because no detector finds everything.
+
 What is missing for this audience: an installation without a terminal, and mask presets for typical
 sensitive folders (ID scans, medical certificates, payroll), which can already be added per project
-with `MASK`.
+with `MASK` - or found with `pii-airgap scan` and added with `pii-airgap mask-add`.
 
 ## What the Claude apps allow
 
@@ -87,7 +96,7 @@ documented. ([sandboxing](https://code.claude.com/docs/en/sandboxing))
 
 | Stage | Content | State |
 |---|---|---|
-| 1 | `office` profile; README section on documents; mask examples for personal data | done (this release), mask examples to do |
+| 1 | `office` profile; README section on documents; mask examples for personal data | done (this release); finding the files to mask: [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap) `scan` and `mask-add` |
 | 2 | **SSH mode prototype**: an `ssh` profile with sshd + SFTP that listens on nothing; `claude-ide-box ssh-config` prints the `ProxyCommand` entry for Desktop; allowlist entries for whatever Desktop downloads when it installs Claude Code remotely | to be tested by hand first |
 | 3 | Installer without a terminal (macOS package, Windows installer driving WSL2/Docker Desktop), guided `doctor` | after stage 2 works |
 | 4 | Comparison with Cowork for the same tasks: what each isolates, what an organisation can configure | research |
