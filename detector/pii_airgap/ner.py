@@ -7,6 +7,7 @@ the image; nothing is downloaded at run time.
 """
 
 import hashlib
+import json
 import os
 
 from .detect import Finding
@@ -105,8 +106,16 @@ def load_backend(spec, threshold=None):
         from gliner import GLiNER  # noqa: imported only when configured
         model = GLiNER.from_pretrained(arg, local_files_only=True)
         th = float(threshold if threshold is not None else os.environ.get("PII_AIRGAP_NER_THRESHOLD", "0.5"))
+        ident = _model_id(arg)
+        try:
+            with open(os.path.join(arg, "gliner_config.json")) as f:
+                encoder = json.load(f).get("model_name") or ""
+        except (OSError, ValueError):
+            encoder = ""
+        if os.path.isdir(encoder):
+            ident += "+" + _model_id(encoder)  # a new encoder revision invalidates the scan cache
         return GlinerBackend(model, threshold=th, fingerprint="gliner:%s:%s" % (os.path.basename(arg.rstrip("/")),
-                                                                                  _model_id(arg)))
+                                                                                  ident))
     if kind == "spacy":
         import spacy  # noqa: imported only when configured
         nlp = spacy.load(arg, exclude=["parser", "tagger", "lemmatizer", "attribute_ruler"])

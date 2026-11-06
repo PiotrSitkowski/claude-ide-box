@@ -485,6 +485,7 @@ cmd_build() {
   fi
   "$ENGINE" build -f "$root/image/Dockerfile" --build-arg "NER=$ner" \
     --build-arg "GLINER_REVISION=${PII_AIRGAP_GLINER_REVISION:-443d26d654e0324125a96bebd8e796c14ff2efe6}" \
+    --build-arg "GLINER_ENCODER_REVISION=${PII_AIRGAP_GLINER_ENCODER_REVISION:-a0484667b22365f84929a935b5e50a51f71f159d}" \
     ${extra[@]+"${extra[@]}"} -t "$PA_IMAGE" "$root"
 }
 

@@ -17,6 +17,10 @@ ARG GLINER_MODEL=urchade/gliner_multi-v2.1
 # Commit of urchade/gliner_multi-v2.1 on huggingface.co (lastModified 2025-12-08); pinned so a
 # rebuild gets the same weights. Licence: Apache-2.0 (model card, checked 2026-11-06).
 ARG GLINER_REVISION=443d26d654e0324125a96bebd8e796c14ff2efe6
+# The encoder GLiNER names (tokenizer and config), also pinned (lastModified 2023-04-06).
+# Licence: MIT (model card, checked 2026-11-06).
+ARG GLINER_ENCODER=microsoft/mdeberta-v3-base
+ARG GLINER_ENCODER_REVISION=a0484667b22365f84929a935b5e50a51f71f159d
 ARG SPACY_MODEL_URL=https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl
 ARG SPACY_MODEL_SHA256=6f3c4b853852ea9e9d2dc76cc950dddb10a7e4c42d813308caefe6c5e8be2f0a
 
@@ -42,7 +46,8 @@ RUN --mount=type=secret,id=build_ca,required=false \
       gliner) \
         pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torch==${TORCH_VERSION}" \
         && pip install --no-cache-dir -r /opt/pii-airgap/build/requirements-gliner.txt \
-        && python3 /opt/pii-airgap/build/fetch-model.py "$GLINER_MODEL" "$GLINER_REVISION" /opt/pii-airgap/model ;; \
+        && python3 /opt/pii-airgap/build/fetch-model.py "$GLINER_MODEL" "$GLINER_REVISION" /opt/pii-airgap/model \
+             "$GLINER_ENCODER" "$GLINER_ENCODER_REVISION" /opt/pii-airgap/encoder ;; \
       spacy) \
         pip install --no-cache-dir -r /opt/pii-airgap/build/requirements-spacy.txt \
         && python3 -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], "/tmp/" + sys.argv[1].rsplit("/", 1)[1])' "$SPACY_MODEL_URL" \

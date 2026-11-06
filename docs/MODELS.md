@@ -16,7 +16,7 @@ card before a release that ships the model.
 | Candidate | Code licence | Weights licence | Languages | Status |
 |---|---|---|---|---|
 | **spaCy `xx_ent_wiki_sm` 3.8.0** (PER, ORG, LOC, MISC) | MIT (spaCy) | MIT, trained on WikiNER (CC BY 4.0) - **verified** in `explosion/spacy-models/meta/xx_ent_wiki_sm-3.8.0.json` | multilingual WikiNER (includes Polish, German, English) | **default**; measured below |
-| **GLiNER `urchade/gliner_multi-v2.1`** (zero-shot labels) | Apache-2.0 - **verified** (`urchade/GLiNER` LICENSE; `gliner` 0.2.30 on PyPI) | Apache-2.0 - **verified** on the [model card](https://huggingface.co/urchade/gliner_multi-v2.1) (2026-11-06, revision `443d26d`, lastModified 2025-12-08) | multilingual (mDeBERTa-v3 encoder) | option (`--ner gliner`), revision pinned; measured in CI, below |
+| **GLiNER `urchade/gliner_multi-v2.1`** (zero-shot labels) | Apache-2.0 - **verified** (`urchade/GLiNER` LICENSE; `gliner` 0.2.30 on PyPI) | Apache-2.0 - **verified** on the [model card](https://huggingface.co/urchade/gliner_multi-v2.1) (2026-11-06, revision `443d26d`, lastModified 2025-12-08); its encoder `microsoft/mdeberta-v3-base` (tokenizer and config): MIT - **verified** on the [model card](https://huggingface.co/microsoft/mdeberta-v3-base) (2026-11-06, revision `a048466`, lastModified 2023-04-06) | multilingual (mDeBERTa-v3 encoder) | option (`--ner gliner`), revision pinned; measured in CI, below |
 | `urchade/gliner_multi` (v0) | Apache-2.0 | CC BY-NC 4.0 per search results - **not verified** | multilingual | excluded: non-commercial |
 | `urchade/gliner_multi_pii-v1` | Apache-2.0 | **not verified** | card lists en, fr, de, es, pt, it - **not verified**; no Polish listed | not used |
 | `fastino/gliner2-privacy-filter-PII-multi` (GLiNER2, 205M, 42 PII types, arXiv 2605.09973) | Apache-2.0 - **verified** (`fastino-ai/GLiNER2` LICENSE) | Apache-2.0 per a third-party copy - **not verified** | multilingual per the paper - **not verified** (arXiv unreachable) | promising next candidate; needs the `gliner2` package (different API), not implemented |
@@ -108,6 +108,12 @@ Decided on 2026-11-06: **spaCy `xx_ent_wiki_sm` stays the default; GLiNER is an 
 - The licence of the `urchade/gliner_multi-v2.1` weights is Apache-2.0 (model card, checked
   2026-11-06). The image pins revision `443d26d654e0324125a96bebd8e796c14ff2efe6` (`GLINER_REVISION`), so a rebuild fetches the same
   weights; override it with `PII_AIRGAP_GLINER_REVISION` only after re-checking the card.
+- Its encoder `microsoft/mdeberta-v3-base` (tokenizer and config) is MIT-licensed (model card,
+  checked 2026-11-06) and pinned too: `GLINER_ENCODER_REVISION`
+  `a0484667b22365f84929a935b5e50a51f71f159d`, overridable with
+  `PII_AIRGAP_GLINER_ENCODER_REVISION`. The build fails if the GLiNER revision names another
+  encoder, and the image points the model at its own copy of the encoder instead of a cache
+  lookup by name.
 - On the corpus GLiNER masks about 2.4 percentage points more in Polish (98.5 % vs 96.1 %) and
   finds more organisations, at about 90 times the CPU time and a larger image. That is worth it
   for folders of documents full of names; for code and ordinary projects spaCy is enough.
