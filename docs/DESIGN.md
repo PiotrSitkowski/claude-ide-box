@@ -102,7 +102,7 @@ access limited to an allowlist. Claude must not be able to do anything outside t
    files via bind of `/dev/null:ro`, directories via empty tmpfs): `.env`, `.env.*`. PrestaShop
    preset adds: `app/config/parameters.php`, `app/config/parameters.yml`, `config/settings.inc.php`.
    Mounted read-only (created on the host if missing, so Docker does not create them as root):
-   `.git`, `.vscode`, `.agent`, `.agents`, `.idea`, `.devcontainer` - files executed or read by host
+   `.git`, `.vscode`, `.agent`, `.agents`, `.idea`, `.devcontainer`, `.claude` - files executed or read by host
    tools (IDE, git hooks, the Antigravity agent). Per-project option (in the global config) to make
    `.git` writable. Mask list and read-only list are configurable globally and per project.
 7. **Hard container settings:** `--cap-drop ALL`, `--security-opt no-new-privileges`, `--read-only`

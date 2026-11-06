@@ -18,6 +18,9 @@ echo "HOST CLAUDE RAN" >&2
 exit 99
 EOS
   chmod +x "$SANDBOX/bin/claude"
+  # node is not on the sandbox PATH; tests that run the container-side
+  # history script with the host's node use this.
+  HOST_NODE="$(command -v node 2>/dev/null || true)"
   # Keep the directory of the bash running the tests (e.g. /usr/local/bin) so
   # the scripts' "#!/usr/bin/env bash" finds the same interpreter.
   local bashdir

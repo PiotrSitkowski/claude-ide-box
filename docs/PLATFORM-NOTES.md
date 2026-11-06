@@ -114,3 +114,43 @@ string, so suffixes (`-rd`, `+azure`, `-0ubuntu2`, `v` prefixes, `(build)`) do n
 empty or non-numeric version (`unknown`, `dev`, a missing runc component) is treated as vulnerable.
 The Docker Desktop row was not re-measured for this check; it follows the format documented for
 `docker version` on Docker Desktop and has to be confirmed on a Mac.
+
+## Transcripts on disk (Claude Code 2.1.318)
+
+Measured in the shipped native binary. Each session's transcript is
+`~/.claude/projects/<project>/<session id>.jsonl`; `<session id>` is a lowercase UUID. Next to them
+Claude Code keeps `memory/` and per-session subdirectories (subagent transcripts). `<project>` is
+derived from the working directory:
+
+```js
+function name(path) {
+  const s = path.replace(/[^a-zA-Z0-9]/g, "-");            // per UTF-16 code unit
+  if (s.length <= 200) return s;
+  return `${s.slice(0, 200)}-${Math.abs(hash(path)).toString(36)}`;
+}
+function hash(t) { let e = 0; for (let n = 0; n < t.length; n++) e = (e << 5) - e + t.charCodeAt(n) | 0; return e; }
+```
+
+A non-ASCII character becomes one `-` (two for characters outside the BMP, which are two code
+units). The container mounts the project at the host's path, so the box and the host use the same
+name. `cb_claude_project_slug` (`lib/claude-ide-box/history.sh`) reimplements it from UTF-8 bytes
+with `od` and `awk`; the unit tests compare it with values produced by the function above.
+
+## Read-only project `.claude`
+
+Measured with Claude Code 2.1.318 driven the way the extension drives it (stream-json, permission
+prompts over stdio, `--setting-sources=user,project,local`), against a fake Messages API, with
+`.claude` mounted read-only - in a container (`tests/integration/permission-probe.js`) and with a
+read-only bind mount on a Linux host:
+
+- the extension's "always allow" arrives as a permission response with
+  `updatedPermissions: [{type: "addRules", destination: "localSettings", ...}]`;
+- with `.claude` read-only the rule still applies for the rest of the session (the same command is
+  not asked about again), `.claude/settings.local.json` is not created or changed, nothing is printed
+  on stderr and no error message reaches the stream; the session ends normally;
+- the next session asks again;
+- with a writable `.claude` (`CLAUDE_DIR_WRITABLE=1`) the same exchange writes the rule to
+  `.claude/settings.local.json`.
+
+Claude Code also creates `.claude/worktrees/<name>` for worktree sessions; those cannot work with a
+read-only `.claude`.
