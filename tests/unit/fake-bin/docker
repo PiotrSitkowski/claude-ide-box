@@ -86,6 +86,21 @@ case "$cmd" in
         printf '%b' "${FAKE_PII_VERIFY_OUT:-}"
         exit "${FAKE_PII_VERIFY_STATUS:-0}"
         ;;
+      *"dst=/run/claude-ide-box-login"*)
+        # login: the container captures the token into the mounted directory
+        printf '%s\n' "$@" >"$dir/login.args"
+        for a in "$@"; do
+          case "$a" in
+            type=bind,src=*,dst=/run/claude-ide-box-login)
+              src="${a#type=bind,src=}"
+              src="${src%,dst=/run/claude-ide-box-login}"
+              [ -z "${FAKE_LOGIN_TOKEN:-}" ] || printf '%s\n' "$FAKE_LOGIN_TOKEN" >"$src/token"
+              ;;
+          esac
+        done
+        printf '%s\n' "${FAKE_LOGIN_SCREEN:-Your OAuth token: [shown as hidden]}"
+        exit "${FAKE_LOGIN_STATUS:-0}"
+        ;;
       *" --rm "*)
         # setup's home-ownership check of a freshly built profile image
         printf '%s' "${FAKE_HOME_FOREIGN:-}"

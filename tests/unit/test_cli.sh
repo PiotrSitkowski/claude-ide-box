@@ -581,3 +581,151 @@ test_forward_relays_a_connection_through_docker_exec() {
 test_forward_listens_on_loopback_only() {
   assert_contains "$(cat "$REPO_DIR/bin/claude-ide-box")" 'LocalAddr => "127.0.0.1"'
 }
+
+# --- fixes from the first manual test on macOS ------------------------------
+
+test_basename_and_dirname_helpers_accept_leading_dashes() {
+  local out
+  out="$(bash -c '. "$1/lib/claude-ide-box/common.sh"
+    for p in -zsh -n -- /usr/bin/-x /a/b/ / a "/a/-b/" ; do
+      printf "[%s|%s] " "$(cb_basename "$p")" "$(cb_dirname "$p")"
+    done
+    printf "[%s]" "$(cb_basename /x/list.txt .txt)"' _ "$REPO_DIR" 2>&1)"
+  assert_eq "[-zsh|.] [-n|.] [--|.] [-x|/usr/bin] [b|/a] [/|/] [a|.] [-b|/a] [list]" "$out"
+}
+
+test_doctor_handles_process_names_starting_with_a_dash() {
+  healthy_host
+  ide_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  fake_ps "  1 /sbin/init
+  300 -zsh
+  301 -bash
+  302 --version-like-name
+  4243 /usr/local/bin/claude --resume x"
+  run_cli doctor
+  assert_not_contains "$ERR" "illegal option"
+  assert_not_contains "$ERR" "invalid option"
+  assert_contains "$OUT" "4243"
+  assert_not_contains "$OUT" "300"
+}
+
+# VS Code profiles keep their own settings in User/profiles/<id>/settings.json.
+profile_settings() {
+  local app="$1" id="$2" content="$3" base="$HOME/.config"
+  if [ "$(uname -s)" = Darwin ]; then
+    base="$HOME/Library/Application Support"
+  fi
+  mkdir -p "$base/$app/User/profiles/$id"
+  printf '%s\n' "$content" >"$base/$app/User/profiles/$id/settings.json"
+}
+
+test_doctor_accepts_the_wrapper_in_an_ide_profile_only() {
+  healthy_host
+  ide_settings Code '{ "editor.fontSize": 12 }'
+  profile_settings Code 5f2a1c "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\", \"git.autoRepositoryDetection\": false }"
+  run_cli doctor
+  assert_status 0 "$STATUS" "$OUT"
+  assert_contains "$OUT" "profiles/5f2a1c/settings.json: claudeProcessWrapper"
+  assert_contains "$OUT" "[warn]"
+  assert_not_contains "$OUT" "FAIL"
+}
+
+test_doctor_checks_use_terminal_in_profiles() {
+  healthy_host
+  ide_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  profile_settings Code 77aa "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\", \"claudeCode.useTerminal\": true }"
+  run_cli doctor
+  assert_nonzero "$STATUS"
+  assert_contains "$OUT" "profiles/77aa/settings.json: claudeCode.useTerminal is true"
+}
+
+test_doctor_fails_when_no_settings_file_sets_the_wrapper() {
+  healthy_host
+  ide_settings Code '{ "editor.fontSize": 12 }'
+  profile_settings Code 5f2a1c '{ "editor.fontSize": 14 }'
+  run_cli doctor
+  assert_nonzero "$STATUS"
+  assert_contains "$OUT" "[FAIL]"
+  assert_contains "$OUT" "claudeProcessWrapper"
+}
+
+test_doctor_only_warns_on_unguarded_binaries_when_auto_guard_is_off() {
+  healthy_host
+  printf 'AUTO_GUARD=0\n' >>"$HOME/.config/claude-ide-box/config"
+  ide_settings Code "{ \"claudeCode.claudeProcessWrapper\": \"$(wrapper_real)\" }"
+  mkdir -p "$HOME/.vscode/extensions/anthropic.claude-code-2.1.400-linux-x64/resources/native-binary"
+  : >"$HOME/.vscode/extensions/anthropic.claude-code-2.1.400-linux-x64/resources/native-binary/claude"
+  run_cli doctor
+  assert_status 0 "$STATUS" "$OUT"
+  assert_contains "$OUT" "[warn]"
+  assert_contains "$OUT" "2.1.400"
+}
+
+# login needs a terminal; util-linux `script` provides one (Linux only).
+run_cli_tty() {
+  if ! script --version 2>/dev/null | grep -q util-linux; then
+    echo "SKIPPED: needs util-linux script for a pseudo-terminal"
+    return 1
+  fi
+  set +e
+  OUT="$(cd "$PROJECT" && printf '%s' "${TTY_INPUT:-}" | script -qec "$(printf '%q ' "$CLI" "$@")" /dev/null 2>&1)"
+  STATUS=$?
+  set -e
+}
+
+login_ready() {
+  printf 'true\n' >"$FAKE_DOCKER_DIR/state"
+}
+
+test_login_captures_the_token_without_showing_it() {
+  login_ready
+  run_cli_tty login || return 0
+  # The fake container reports success but captured nothing yet: set it now.
+  FAKE_LOGIN_TOKEN=sk-ant-oat01-AbC_d-123 run_cli_tty login || return 0
+  assert_status 0 "$STATUS" "$OUT"
+  assert_eq "sk-ant-oat01-AbC_d-123" "$(cat "$HOME/.config/claude-ide-box/token")"
+  assert_not_contains "$OUT" "sk-ant-oat01-AbC_d-123"
+  assert_contains "$OUT" "not shown"
+  local a
+  a="$(tr '\n' ' ' <"$FAKE_DOCKER_DIR/login.args")"
+  assert_contains "$a" "dst=/run/claude-ide-box-login "
+  assert_contains "$a" "--read-only"
+  assert_contains "$a" "--cap-drop ALL"
+  assert_not_contains "$a" "$HOME/.config"
+}
+
+test_login_falls_back_to_pasting_when_nothing_was_captured() {
+  login_ready
+  TTY_INPUT='sk-ant-oat01-pasted
+' run_cli_tty login || return 0
+  assert_status 0 "$STATUS" "$OUT"
+  assert_contains "$OUT" "Paste the token"
+  assert_eq "sk-ant-oat01-pasted" "$(cat "$HOME/.config/claude-ide-box/token")"
+}
+
+test_login_capture_directory_is_removed() {
+  login_ready
+  FAKE_LOGIN_TOKEN=sk-ant-oat01-x run_cli_tty login || return 0
+  local src
+  src="$(grep -o 'src=[^,]*,dst=/run/claude-ide-box-login' "$FAKE_DOCKER_DIR/login.args" | sed 's/^src=//; s/,dst=.*//')"
+  [ -n "$src" ] || fail "no capture directory was mounted"
+  assert_file_missing "$src"
+}
+
+test_login_token_filter_masks_tokens_split_across_chunks() {
+  [ -n "${TEST_NODE:-}" ] || { echo "SKIPPED: no node"; return 0; }
+  local dir out
+  dir="$SANDBOX/cap"
+  mkdir -p "$dir"
+  # The token arrives in pieces, with colour codes around it, twice (a redraw).
+  out="$("$TEST_NODE" -e '
+const parts = ["Your OAuth token (valid for 1 year):\n\n  \u001b[1msk-a", "nt-oat01-Ab", "Cd_e-f123\u001b[22m\n\nStore it", " safely. Again: sk-ant-oat01-AbCd_e-f123\n"];
+const { spawn } = require("child_process");
+const p = spawn(process.argv[1], ["-e", require("fs").readFileSync(process.argv[2], "utf8"), process.argv[3]], { stdio: ["pipe", "inherit", "inherit"] });
+(async () => { for (const x of parts) { p.stdin.write(x); await new Promise(r => setTimeout(r, 30)); } p.stdin.end(); })();
+' "$TEST_NODE" "$REPO_DIR/lib/claude-ide-box/login-filter.js" "$dir/token")"
+  assert_not_contains "$out" "AbCd_e-f123"
+  assert_contains "$out" "Your OAuth token"
+  assert_contains "$out" "Store it safely."
+  assert_eq "sk-ant-oat01-AbCd_e-f123" "$(cat "$dir/token")"
+}
