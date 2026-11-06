@@ -45,7 +45,8 @@ command -v "$ENGINE" >/dev/null 2>&1 || skip "no $ENGINE"
 NER="$("$ENGINE" run --rm --entrypoint sh "$IMAGE" -c 'echo $PII_AIRGAP_NER')"
 echo "image $IMAGE, NER=$NER"
 
-T="$(mktemp -d "${TMPDIR:-/tmp}/pii-airgap-it.XXXXXX")"
+tmpbase="${TMPDIR:-/tmp}"
+T="$(mktemp -d "${tmpbase%/}/pii-airgap-it.XXXXXX")"
 trap 'chmod -R u+w "$T" 2>/dev/null; rm -rf "$T"' EXIT
 export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_CACHE_HOME="$T/home/.cache" XDG_STATE_HOME="$T/home/.local/state"
 mkdir -p "$HOME"

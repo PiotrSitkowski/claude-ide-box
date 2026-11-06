@@ -18,7 +18,7 @@ Design: [docs/DESIGN.md](docs/DESIGN.md). Model choices: [docs/MODELS.md](docs/M
 
 ## Python (`detector/`)
 - Standard library only in the core; optional backends are imported lazily.
-- Python 3.9 or newer.
+- Python 3.10 or newer.
 - Anything that cannot be read is an error in the report, never an empty result.
 
 ## Rules that keep the design honest

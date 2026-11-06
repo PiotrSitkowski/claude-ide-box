@@ -16,7 +16,9 @@ for file in "$TESTS_DIR"/unit/test_*.sh; do
   names="$(grep -E '^test_[a-z0-9_]+\(\)' "$file" | sed 's/().*//')"
   for t in $names; do
     case "$t" in *"$FILTER"*) ;; *) continue ;; esac
-    tmp="$(mktemp -d "${TMPDIR:-/tmp}/pii-airgap-test.XXXXXX")"
+    # macOS sets TMPDIR with a trailing slash; the wrapper normalises paths.
+    tmpbase="${TMPDIR:-/tmp}"
+    tmp="$(mktemp -d "${tmpbase%/}/pii-airgap-test.XXXXXX")"
     set +e
     out="$(
       export HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/home/.config" XDG_CACHE_HOME="$tmp/home/.cache"

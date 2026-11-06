@@ -5,7 +5,7 @@ What is verified automatically, where, and what is not.
 | Layer | Command | Needs |
 |---|---|---|
 | Static analysis | `shellcheck -x bin/pii-airgap tests/...` (see CI) | shellcheck 0.11 |
-| Python unit | `cd detector && python3 -m unittest discover -s tests -t .` | Python 3.9+ only (`pdftotext` optional) |
+| Python unit | `cd detector && python3 -m unittest discover -s tests -t .` | Python 3.10+ only (`pdftotext` optional) |
 | Shell unit | `tests/run-unit.sh [filter]` | bash 3.2+; `CLAUDE_IDE_BOX_SRC=<checkout>` enables the container-name cross-check |
 | Integration | `PII_AIRGAP_IMAGE=pii-airgap:spacy tests/integration/run.sh` | Docker or Podman and a built image |
 | Evaluation | `python3 eval/evaluate.py [--ner SPEC]` | the corpus in `eval/`; spaCy for `--ner spacy` |
