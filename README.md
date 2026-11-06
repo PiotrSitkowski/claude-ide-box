@@ -1,33 +1,71 @@
-# pii-airgap
+<h1 align="center">pii-airgap</h1>
 
-Air-gapped PII detector and reversible anonymiser for AI coding agents and document work - native
-plugin for [Claude IDE Box](https://github.com/PiotrSitkowski/claude-ide-box), usable on its own with
-plain `docker run --network none`.
+<p align="center">
+  <b>Air-gapped PII detector and reversible anonymiser for AI coding agents and document work.</b><br>
+  Finds personal data in a project and swaps it for tokens before an AI agent sees it - on your machine, with a local model and no network.
+</p>
 
-> **Read this first.** No detector finds all personal data. Whatever pii-airgap misses is sent to the
-> AI provider in clear text, exactly as without it. It reduces exposure; it does not make a workflow
-> compliant with GDPR, CCPA, HIPAA or any other regulation, and it is not a substitute for a data
-> protection assessment, a processing agreement with the provider, or not sending the data at all.
+<p align="center">
+  <a href="https://github.com/PiotrSitkowski/pii-airgap/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PiotrSitkowski/pii-airgap/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0f766e"></a>
+  <img alt="Network" src="https://img.shields.io/badge/runs%20with-network%20none-b42318">
+  <img alt="Languages" src="https://img.shields.io/badge/tested-Polish%20%C2%B7%20English%20%C2%B7%20German-4338ca">
+  <img alt="Shell" src="https://img.shields.io/badge/bash-3.2%2B-59636e">
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+    <img alt="Architecture: on the host, the pii-airgap wrapper starts throw-away containers with no network. One scans the project read-only and reports which files hold personal data, without the values; another replaces the values in Claude IDE Box's try copy with tokens and later restores them, using a token map that stays on the host. The agent sees only tokens." src="docs/assets/architecture-light.svg" width="100%">
+  </picture>
+</p>
+
+---
+
+**What it is.** A scanner and a reversible pseudonymiser that run entirely on your machine. `scan`
+tells you which files hold which kinds of personal data. For an agent session, pii-airgap replaces
+names, account numbers and identifiers in a *copy* of the project with tokens such as `[PERSON_1]`
+or `[IBAN_1]`, keeps the token map on the host, and puts the real values back before the agent's
+changes reach your files. Detection uses checksums, patterns, your own lists and a local NER model
+that is baked into the image when it is built. A native plugin for
+[Claude IDE Box](https://github.com/PiotrSitkowski/claude-ide-box), and usable on its own with plain
+`docker run --network none`.
+
+**What it is not.** It is not a guarantee and not a compliance tool. Read the warning below before
+relying on it.
+
+> [!WARNING]
+> **No detector finds all personal data.** Whatever pii-airgap misses is sent to the AI provider in
+> clear text, exactly as without it. It reduces exposure; it does not make a workflow compliant
+> with GDPR, CCPA, HIPAA or any other regulation, and it is not a substitute for a data protection
+> assessment, a processing agreement with the provider, or not sending the data at all.
+
+## Contents
+
+- [What it does](#what-it-does)
+- [How detection works](#how-detection-works) - [measured quality](#measured-quality)
+- [Quick start](#quick-start) - [on its own](#on-its-own) · [with Claude IDE Box](#with-claude-ide-box)
+- [Telling the agent that tokens are immutable](#telling-the-agent-that-tokens-are-immutable)
+- [Security model](#security-model)
+- [Documentation](#documentation)
 
 ## What it does
 
-- **`scan`** - tells you which files hold which kinds of personal data, with a confidence per finding.
-  Plain text, DOCX/XLSX/PPTX, OpenDocument, PDF, scans (OCR in Polish, English and German) and
-  legacy Office formats. Results are cached by file content hash; neither the cache nor the report
-  ever contains a detected value, only its type, line, confidence and a masked preview.
-- **`mask-add`** - adds chosen files to Claude IDE Box's masks for the project (in
-  `~/.config/claude-ide-box/projects/<container>.conf`, never in the project), so the agent's
-  container sees them as empty files.
-- **Reversible pseudonymisation** - replaces values with tokens such as `[PERSON_1]` or `[IBAN_1]` in
-  the copy the agent works on, keeps the token map on the host (mode 600, never mounted into the
-  agent's container), and puts the real values back before the changes reach your files.
-  Restoration is strict: only exact, known tokens are replaced; unknown or altered tokens are
-  reported and nothing is guessed.
+| Command | What it does |
+|---|---|
+| `pii-airgap scan` | which files hold which kinds of personal data, with a confidence per finding. Plain text, DOCX/XLSX/PPTX, OpenDocument, PDF, scans (OCR in Polish, English and German) and legacy Office formats. Cached by file content hash; neither the cache nor the report ever contains a detected value - only type, line, confidence and a masked preview |
+| `pii-airgap mask-add FILE...` | adds files to Claude IDE Box's masks for the project (in `~/.config/claude-ide-box/projects/<container>.conf`, never in the project), so the agent's container sees them as empty files |
+| `pii-airgap anonymise` / `restore` | replaces values with `[TYPE_N]` tokens in a copy and puts them back later. The token map stays on the host (mode 600) and is never mounted into the agent's container. Restoration is strict: only exact, known tokens are replaced; unknown or altered tokens are reported and nothing is guessed |
+| `pii-airgap try-prepare` / `try-restore` | the same for the copy of a `claude-ide-box up --try` session |
 
 Everything runs in a throw-away container with `--network none`, a read-only root file system, no
-capabilities and your UID. The model is baked into the image when it is built; at run time nothing
-can be downloaded or sent anywhere. CPU only. The image is 0.9-1.4 GB (measured, see
+capabilities and your UID. The model is part of the image; at run time nothing can be downloaded or
+sent anywhere. CPU only. The image is 0.9-1.4 GB without GLiNER (measured, see
 [TESTING.md](TESTING.md)), so it is an optional add-on and never part of the Claude IDE Box base image.
+
+> [!NOTE]
+> Internet access is needed only to **build** the image (Ubuntu packages, Python packages, the model
+> from GitHub releases or Hugging Face). Once built, the image works on a machine with no network.
 
 ## How detection works
 
@@ -145,12 +183,25 @@ project). The hooks below are proposed for Claude IDE Box and not merged yet; un
 steps can be run by hand around a try session (`pii-airgap try-prepare DIR` right after the copy is
 made and before the container starts, `pii-airgap try-restore DIR` before `try apply`):
 
-```text
-claude-ide-box up --try --pseudonymise
-    copy the project -> pii-airgap try-prepare (scan, then tokens in the copy, .git removed)
-    -> start the container with an appended system prompt (below)
-claude-ide-box try diff | apply | end
-    stop the container -> pii-airgap try-restore (strict) -> compare and apply as usual
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as you
+    participant B as claude-ide-box
+    participant P as pii-airgap (no network)
+    participant C as Claude container
+    U->>B: up --try --pseudonymise
+    B->>B: copy the project, blank masked files
+    B->>P: try-prepare: scan the copy (read-only, no map)
+    P-->>B: report without values (documents with PII stop here)
+    B->>P: pseudonymise the copy, keep the map on the host
+    B->>C: start on the copy, token instructions appended
+    C-->>B: edits made with [PERSON_1], [IBAN_1] ...
+    U->>B: try apply
+    B->>C: stop
+    B->>P: try-restore: exact known tokens only
+    P-->>B: unknown or altered token? nothing is applied
+    B->>U: real values written into your files
 ```
 
 A failed `try-prepare` stops the session before the container starts; a failed `try-restore` stops
@@ -163,34 +214,37 @@ The wrapper appends `pii-airgap system-prompt` to the agent's system prompt (Cla
 inflect, split, translate or decode them, never write code that parses them, and use obviously
 fictional data that does not look like a token when examples are needed.
 
-What can still go wrong, even with that prompt:
-
-- **Altered tokens** - `[person_1]`, `[PERSON 1]`, `PERSON_1`, escaped brackets in a regex or JSON
-  string. Restoration reports them (file and line) and writes nothing until you fix them or pass
-  `--keep-unresolved`.
-- **Invented tokens** - `[PERSON_7]` that was never issued. Reported as unknown, never guessed.
-- **Valid tokens in the wrong place** - the agent copies `[PERSON_1]` into a log message, a test
-  fixture or a commit message. It is a known token, so it is restored there, and the real value ends
-  up in a new place. Review the diff (`try diff` shows the restored text).
-- **Meaning lost** - Polish inflection (`Kowalski` / `Kowalskiego` are different tokens), the
-  agent cannot see that two tokens are the same person, cannot check a checksum, compute an age
-  from a date of birth or validate a format. Code that depends on real values has to be tested on
-  the host, after restoration.
-- **Misses** - anything not detected stays in clear text in the copy and is sent to the provider.
-- **Things outside the copy** - the agent's own conversation history, prompts you type, files you
-  paste into the chat and tool output from allowlisted network services are not pseudonymised.
+> [!WARNING]
+> **What can still go wrong, even with that prompt.**
+> - **Altered tokens** - `[person_1]`, `[PERSON 1]`, `PERSON_1`, escaped brackets in a regex or JSON
+>   string. Restoration reports them (file and line) and writes nothing until you fix them or pass
+>   `--keep-unresolved`.
+> - **Invented tokens** - `[PERSON_7]` that was never issued. Reported as unknown, never guessed.
+> - **Valid tokens in the wrong place** - the agent copies `[PERSON_1]` into a log message, a test
+>   fixture or a commit message. It is a known token, so it is restored there, and the real value ends
+>   up in a new place. Review the diff (`try diff` shows the restored text).
+> - **Meaning lost** - Polish inflection (`Kowalski` / `Kowalskiego` are different tokens), the
+>   agent cannot see that two tokens are the same person, cannot check a checksum, compute an age
+>   from a date of birth or validate a format. Code that depends on real values has to be tested on
+>   the host, after restoration.
+> - **Misses** - anything not detected stays in clear text in the copy and is sent to the provider.
+> - **Things outside the copy** - the agent's own conversation history, prompts you type, files you
+>   paste into the chat and tool output from allowlisted network services are not pseudonymised.
 
 ## Security model
 
-- The scanner parses untrusted files (PDF, Office, images). It runs with no network, a read-only
-  root, no capabilities, your UID, memory and process limits, and the project mounted read-only.
-  The token map is never mounted into it.
-- The pseudonymiser and the restorer see the map, but run only pii-airgap's own Python (no PDF,
-  Office or OCR code) on plain text files, with no network.
-- The map lives in `~/.local/state/pii-airgap/` (directory 700, file 600), outside anything the
-  agent's container can see.
-- A compromised scanner could lie (report "no PII"). That is the same outcome as a miss and is
-  stated above; it cannot reach the network or the map.
+| Threat | How pii-airgap handles it |
+|---|---|
+| a malicious PDF or Office file exploits a parser | the scanner has no network, no token map, the project read-only, no capabilities, your UID, memory and process limits |
+| the token map leaks to the agent | it lives in `~/.local/state/pii-airgap/` (directory 700, file 600) and is never mounted into the agent's container or the scanner |
+| the agent edits what is looked for | your lists must live outside every scanned folder |
+| a document cannot be pseudonymised | DOCX, PDF and scans with personal data stop the session until they are masked |
+| git history keeps the original values | `.git` is refused, or removed from the copy in a try session |
+| a model fails to load and finds nothing | the run fails; a missing model never turns into "no names found" |
+| a token restores to the wrong value | exact match only; near misses are reported and nothing is written |
+
+A compromised scanner could still lie and report "no PII" - the same outcome as a miss, stated
+above. It cannot reach the network or the map.
 
 More: [SECURITY.md](SECURITY.md), [docs/DESIGN.md](docs/DESIGN.md).
 
@@ -198,6 +252,7 @@ More: [SECURITY.md](SECURITY.md), [docs/DESIGN.md](docs/DESIGN.md).
 
 - [docs/DESIGN.md](docs/DESIGN.md) - architecture, data flow, decisions
 - [docs/MODELS.md](docs/MODELS.md) - NER candidates, licences, languages, what was verified
+- `tools/make-diagrams.py` - regenerates the architecture diagrams (light and dark)
 - [TESTING.md](TESTING.md) - what is tested, where, and what is not
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
