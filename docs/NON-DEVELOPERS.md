@@ -31,9 +31,10 @@ The user keeps opening the same files in Word, Excel or LibreOffice on their com
 > **Recommended for client data: [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap).** The box limits what Claude can reach, but
 > every document Claude reads is sent to the API. pii-airgap runs on the same computer, with a
 > local model and no network: `pii-airgap scan` lists which documents hold personal data (names,
-> IBANs, PESEL, NIP, ID numbers, addresses), and `pii-airgap mask-add FILE` hides whole documents
-> from Claude. It reduces what is sent; it is not GDPR compliance, because no detector finds
-> everything.
+> IBANs, PESEL, NIP, ID numbers, addresses), `pii-airgap mask-add FILE` hides whole documents from
+> Claude, and `claude-ide-box up --try --pseudonymise` lets Claude work on a copy where personal
+> data is replaced by tokens such as `[PERSON_1]` and put back afterwards. It reduces what is sent;
+> it is not GDPR compliance, because no detector finds everything.
 
 What is missing for this audience: an installation without a terminal, and mask presets for typical
 sensitive folders (ID scans, medical certificates, payroll), which can already be added per project

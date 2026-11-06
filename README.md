@@ -403,6 +403,7 @@ creates its container (a few seconds); later sessions reuse it.
 | `claude-ide-box allow example.org` | allow a domain (`.example.org` for subdomains too) |
 | `claude-ide-box up --recreate` | apply changed masks or settings now |
 | `claude-ide-box up --try` | let Claude work on a throw-away copy; `try diff`, then `try apply` or `try discard` (`try end` asks) |
+| `claude-ide-box up --try --pseudonymise` | the same, with personal data in the copy replaced by tokens (needs [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap)) |
 | `claude-ide-box down` / `rm` | stop / remove this project's container (`rm --volume` also deletes history) |
 | `claude-ide-box doctor` | check the whole setup; non-zero exit on any failure |
 
@@ -474,7 +475,7 @@ Executable bits are applied; other permission changes are not.
 
 ### Pseudonymised copies (`--pseudonymise`)
 
-With [pii-airgap](#ecosystem) installed, `claude-ide-box up --try --pseudonymise` replaces personal
+With [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap) installed, `claude-ide-box up --try --pseudonymise` replaces personal
 data in the copy with tokens such as `[PERSON_1]` or `[IBAN_1]` before the container starts, and
 puts the real values back before `try diff`, `try apply` or `try end` compare anything:
 
@@ -579,10 +580,11 @@ on your machine with a local model and no network:
 |---|---|---|
 | 1. See what is there | `pii-airgap scan` | which files hold names, IBANs, PESELs, phone numbers..., with confidence; no value is ever printed or cached |
 | 2. Hide whole documents | `pii-airgap mask-add contracts/umowa.docx`, then `claude-ide-box up --recreate` | the file is empty inside the box (the same mask mechanism as `.env`) |
+| 3. Work on a pseudonymised copy | `claude-ide-box up --try --pseudonymise` | Claude sees `[PERSON_1]`, `[IBAN_1]` instead of the values; they are put back on your machine before `try apply` writes anything |
 
-Both steps work with this version of Claude IDE Box. A third step - letting Claude work on a copy in
-which personal data is replaced by tokens such as `[PERSON_1]` and put back afterwards - is
-proposed in [#3](https://github.com/PiotrSitkowski/claude-ide-box/pull/3).
+Steps 1 and 2 work with any Claude IDE Box version; step 3 needs the `--pseudonymise` hooks. Step 3
+suits text and code; documents that cannot be rewritten in place (DOCX, PDF, scans) must be masked
+first, and the session refuses to start until they are.
 
 > [!WARNING]
 > No detector finds everything. What pii-airgap misses reaches the API in clear text, so this lowers
@@ -740,7 +742,8 @@ Recommended for any project that holds personal data; see
 [Personal data in the project](#personal-data-in-the-project).
 
 `claude-ide-box pii ...` runs `pii-airgap` from `PATH` (or `CLAUDE_IDE_BOX_PII`) with the same
-arguments.
+arguments. Recommended for any project that holds personal data; see
+[Personal data in the project](#personal-data-in-the-project).
 
 ## Development
 
