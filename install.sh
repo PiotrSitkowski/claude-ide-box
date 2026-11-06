@@ -24,7 +24,9 @@ case "$prefix" in
   *) prefix="$(pwd -P)/$prefix" ;;
 esac
 
-src="$(cd -P "$(dirname "$0")" && pwd -P)"
+# No dirname: a path starting with "-" would be read as an option.
+case "$0" in */*) src_dir="${0%/*}" ;; *) src_dir=. ;; esac
+src="$(cd -P "${src_dir:-/}" && pwd -P)"
 share="$prefix/share/claude-ide-box"
 bindir="$prefix/bin"
 commands="claude-ide-box claude-ide-box-exec"

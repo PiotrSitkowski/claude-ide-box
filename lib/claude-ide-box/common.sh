@@ -30,6 +30,49 @@ cb_init_paths() {
   CB_EMPTY_FILE="$CB_STATE_DIR/empty"
 }
 
+# basename/dirname without the external tools: a name from outside (a
+# process name such as "-zsh", a file in the project) can start with "-",
+# which basename and dirname would read as an option.
+cb_basename() {
+  local p="$1"
+  while :; do
+    case "$p" in
+      */) [ "$p" = / ] && break; p="${p%/}" ;;
+      *) break ;;
+    esac
+  done
+  [ "$p" = / ] || p="${p##*/}"
+  if [ -n "${2:-}" ] && [ "$p" != "$2" ]; then
+    p="${p%"$2"}"
+  fi
+  printf '%s\n' "$p"
+}
+
+cb_dirname() {
+  local p="$1"
+  while :; do
+    case "$p" in
+      */) [ "$p" = / ] && break; p="${p%/}" ;;
+      *) break ;;
+    esac
+  done
+  case "$p" in
+    /) ;;
+    */*)
+      p="${p%/*}"
+      while :; do
+        case "$p" in
+          */) p="${p%/}" ;;
+          *) break ;;
+        esac
+      done
+      [ -n "$p" ] || p=/
+      ;;
+    *) p=. ;;
+  esac
+  printf '%s\n' "$p"
+}
+
 # Resolve symlinks of a path without `readlink -f` (absent on older macOS).
 cb_resolve_path() {
   local p="$1" link n=0 dir
@@ -41,14 +84,14 @@ cb_resolve_path() {
     link="$(readlink "$p")"
     case "$link" in
       /*) p="$link" ;;
-      *) p="$(dirname "$p")/$link" ;;
+      *) p="$(cb_dirname "$p")/$link" ;;
     esac
   done
-  dir="$(cd -P "$(dirname "$p")" 2>/dev/null && pwd -P)" || return 1
+  dir="$(cd -P "$(cb_dirname "$p")" 2>/dev/null && pwd -P)" || return 1
   if [ "$dir" = "/" ]; then
-    printf '/%s\n' "$(basename "$p")"
+    printf '/%s\n' "$(cb_basename "$p")"
   else
-    printf '%s/%s\n' "$dir" "$(basename "$p")"
+    printf '%s/%s\n' "$dir" "$(cb_basename "$p")"
   fi
 }
 
@@ -313,7 +356,7 @@ cb_validate_config() {
 # Set one key in a config file, keeping other lines. No sed -i (BSD/GNU differ).
 cb_config_set() {
   local file="$1" key="$2" value="$3" tmp
-  mkdir -p "$(dirname "$file")"
+  mkdir -p "$(cb_dirname "$file")"
   tmp="$file.tmp.$$"
   if [ -f "$file" ]; then
     grep -v "^[[:space:]]*$key=" "$file" >"$tmp" || true
@@ -369,7 +412,7 @@ cb_project_hash() {
 }
 
 cb_container_name() {
-  printf '%s-%s-%s\n' "${CB_INSTANCE:-claude-ide-box}" "$(cb_sanitize_name "$(basename "$1")")" "$(cb_project_hash "$1")"
+  printf '%s-%s-%s\n' "${CB_INSTANCE:-claude-ide-box}" "$(cb_sanitize_name "$(cb_basename "$1")")" "$(cb_project_hash "$1")"
 }
 
 # CLAUDE_IDE_BOX_INSTANCE namespaces every Docker object claude-ide-box creates. It
@@ -511,8 +554,8 @@ cb_find_docker() {
   fi
   # Credential helpers and CLI plugins live next to the docker binary.
   case ":$PATH:" in
-    *":$(dirname "$CB_DOCKER"):"*) ;;
-    *) PATH="$(dirname "$CB_DOCKER"):$PATH"; export PATH ;;
+    *":$(cb_dirname "$CB_DOCKER"):"*) ;;
+    *) PATH="$(cb_dirname "$CB_DOCKER"):$PATH"; export PATH ;;
   esac
   cb_log "docker: $CB_DOCKER (DOCKER_HOST=${DOCKER_HOST:-unset}, DOCKER_CONTEXT=${DOCKER_CONTEXT:-unset})"
 }
@@ -763,7 +806,7 @@ cb_compute_mounts() {
     path="$dir/$e"
     # A symlinked parent directory would make docker bind a host path
     # outside the project.
-    if ! cb_path_inside "$dir" "$(dirname "$path")"; then
+    if ! cb_path_inside "$dir" "$(cb_dirname "$path")"; then
       cb_log "read-only: parent of $path resolves outside the project; skipped"
       continue
     fi
@@ -829,7 +872,7 @@ cb_check_mask_record() {
 cb_write_mask_record() {
   local record
   record="$(cb_mask_record)"
-  mkdir -p "$(dirname "$record")"
+  mkdir -p "$(cb_dirname "$record")"
   local kind path
   while IFS="$CB_TAB" read -r kind path; do
     case "$kind" in

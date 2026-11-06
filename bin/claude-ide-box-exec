@@ -28,11 +28,15 @@ while [ -L "$self" ]; do
   link="$(readlink "$self")"
   case "$link" in
     /*) self="$link" ;;
-    *) self="$(dirname "$self")/$link" ;;
+    *) case "$self" in */*) self="${self%/*}/$link" ;; *) self="$link" ;; esac ;;
   esac
 done
-CB_SELF="$(cd -P "$(dirname "$self")" && pwd -P)/$(basename "$self")"
-CB_ROOT="$(dirname "$(dirname "$CB_SELF")")"
+# No basename/dirname: a path starting with "-" would be read as an option.
+case "$self" in */*) self_dir="${self%/*}" ;; *) self_dir=. ;; esac
+CB_SELF="$(cd -P "${self_dir:-/}" && pwd -P)/${self##*/}"
+CB_ROOT="${CB_SELF%/*}"
+CB_ROOT="${CB_ROOT%/*}"
+CB_ROOT="${CB_ROOT:-/}"
 CB_LIB="$CB_ROOT/lib/claude-ide-box"
 if [ ! -f "$CB_LIB/common.sh" ]; then
   echo "claude-ide-box: cannot find $CB_LIB/common.sh (broken installation)" >&2
