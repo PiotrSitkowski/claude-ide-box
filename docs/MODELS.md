@@ -87,6 +87,19 @@ Built and evaluated by CI (GitHub Actions, revision `main` at the time, CPU), in
 `sentencepiece`, and the container's UID has no passwd entry, so the image sets `USER`/`LOGNAME`;
 the build-time self-test runs as such a UID.
 
+## After the rules from the first end-to-end test
+
+The corpus now has 230 documents, including 15 modelled on what a first end-to-end run let through
+(see the README). With the table, whole-name, legal-form and sentence-start rules:
+
+| Backend | Masked % Polish | Masked % English | Masked % German | ORG recall % | Field cases fully masked |
+|---|---:|---:|---:|---:|---:|
+| spaCy `xx_ent_wiki_sm` | 96.1 | 97.5 | 95.6 | 75.0 | 42 / 42 (before the rules: 31) |
+| GLiNER `gliner_multi-v2.1` | 98.5 | 99.0 | 98.5 | 92.9 | 42 / 42 (before the rules: 41) |
+
+GLiNER alone already handled the field cases except one legal form (`Inc.`); the rules close the
+gap for spaCy. GLiNER took 226 ms per document on the CI runner, spaCy 2.5 ms.
+
 ## Choosing the default
 
 1. Check the weights licence of `urchade/gliner_multi-v2.1` (and of the GLiNER2 PII model) on their

@@ -10,7 +10,7 @@ What is verified automatically, where, and what is not.
 | Integration | `PII_AIRGAP_IMAGE=pii-airgap:spacy tests/integration/run.sh` | Docker or Podman and a built image |
 | Evaluation | `python3 eval/evaluate.py [--ner SPEC]` | the corpus in `eval/`; spaCy for `--ner spacy` |
 
-## Python unit tests (70)
+## Python unit tests (92)
 
 | File | Covers |
 |---|---|
@@ -20,6 +20,7 @@ What is verified automatically, where, and what is not.
 | `test_scan.py` (8) | DOCX, XLSX, PDF (when `pdftotext` exists) extraction; binary files; zip bomb refused; report without values, with lines and confidence; cache reused for unchanged files, invalidated by content and by detector configuration, never holding values; symlinks not followed |
 | `test_ner.py` (6) | chunking keeps offsets; GLiNER and spaCy label mapping (with fake models, no download); offsets across chunks; fingerprints differ per model; a missing model directory is an error |
 | `test_cli.py` (9) | text and JSON reports, no value printed, NER warning; `--fail-on-pii`; an unloadable model fails closed with empty stdout; bad list file; anonymise/restore exit codes and messages; documents from a scan report block; `system-prompt` |
+| `test_rules.py` (22) | rules from the first end-to-end test: person, place and address columns from table headers (CSV, TSV, Markdown inside text, XLSX sheets, quoted cells, a blank line starting a new table, other "name" columns ignored, header cells never findings), CSV files pseudonymised as tables, delimiter sniffing; a model's person match widened over adjacent capitalised words with titles left outside and stopping at punctuation and line ends; company names with legal forms (Polish, German, English) beating a model's partial match, no company without a name; a one-word place at a sentence, line or cell start dropped only when the model does not find it in lower case; a model's match cut at line breaks |
 
 ## Shell unit tests (21)
 
@@ -79,6 +80,14 @@ Each stage's tests were committed with the code, but run red before the implemen
   `set -e` inside a command substitution, so a failed assertion did not stop a test. Fixed, the
   real red run was 18 failed, 2 passed vacuously (refusal tests, which a missing script also
   "passes"), 1 skipped (cross-check without `CLAUDE_IDE_BOX_SRC`).
+
+The rules from the first end-to-end test were written the same way: the corpus gained 15 cases
+modelled on what that test let through and was scored before any rule changed (spaCy: 31 of 42
+values fully masked; GLiNER in CI: 41 of 42), then `test_rules.py` failed to import (19 tests),
+the rules were added, and three more tests were written red after a scoring run showed spaCy
+joining a table's last cell to the next row, a header cell taken for a place, and place columns.
+Afterwards: 42 of 42 with both models. The scan helper in `test_scan.py` had to accept the new
+`table` argument of `detect`.
 
 Problems the tests found on the way: tokens were numbered from the end of the text; a short PDF
 was sent to OCR because the "has a text layer" threshold counted characters per file instead of
