@@ -84,8 +84,19 @@ checksum and pattern rows are optimistic: every miss in those rows comes from th
 with a stray space, an SSN without dashes, a UK mobile number, a German postcode, an inflected
 Polish street name). Real documents
 will do worse. The NER rows are a fairer picture of the model, but the corpus is small and
-synthetic. A GLiNER model is supported (`pii-airgap build --ner gliner`) but has **not** been
-measured yet - see [docs/MODELS.md](docs/MODELS.md); the CI workflow builds it and prints its scores.
+synthetic.
+
+**GLiNER** (`pii-airgap build --ner gliner`, model `urchade/gliner_multi-v2.1`), measured by CI
+inside the image without network ([eval/results-gliner-urchade-gliner_multi-v2.1.md](eval/results-gliner-urchade-gliner_multi-v2.1.md)):
+
+| | Polish | English | German | ORG recall | PERSON recall | Speed |
+|---|---:|---:|---:|---:|---:|---:|
+| spaCy `xx_ent_wiki_sm` (default) - masked characters % | 92.7 | 94.7 | 94.1 | 52.0 | 96.7 | 2.5 ms/doc |
+| GLiNER `gliner_multi-v2.1` - masked characters % | 98.3 | 99.0 | 98.4 | 92.0 | 100.0 | 178 ms/doc |
+
+GLiNER finds clearly more, mostly organisations, at about 70 times the CPU time and with more false
+dates of birth (13). It is not the default yet only because the licence of its weights has not been
+checked on the model card (see [docs/MODELS.md](docs/MODELS.md)).
 
 ## Quick start
 

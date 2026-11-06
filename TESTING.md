@@ -66,7 +66,7 @@ new files get the real values; `try-forget`.
 | Integration, Docker 29.9.2, image `NER=spacy` (1.36 GB) | 30 passed |
 | Integration, Docker 29.9.2, image `NER=none` (0.90 GB) | 29 passed |
 | Evaluation inside the `spacy` image under `--network none` | identical to the host run |
-| CI (GitHub Actions) | not run yet when this was written |
+| CI (GitHub Actions), run 37 | all jobs green: shellcheck, shell unit on ubuntu, macOS `/bin/bash` 3.2 and `bash:3.2`, Python 3.10/3.12/3.13 and macOS, corpus and scores reproducible, integration with images `none`, `spacy` and `gliner` (30 passed), evaluation inside each image |
 
 ## Written test-first
 
@@ -92,11 +92,12 @@ every cache entry miss.
 
 ## Not tested, and why
 
-- **GLiNER.** huggingface.co and download.pytorch.org were blocked in the development sandbox, so the
-  `NER=gliner` image was never built and its quality never measured. The CI matrix builds it and
-  runs the integration tests and the evaluation inside it; until that has passed, treat the GLiNER
-  path (including `image/fetch-model.py` fetching the encoder for offline use) as untested.
-- **macOS and `/bin/bash` 3.2 on BSD userland**: covered by the CI job only.
+- **GLiNER locally.** huggingface.co and download.pytorch.org were blocked in the development
+  sandbox; the `gliner` image was built and tested only by CI. Its first three CI builds failed
+  (missing `protobuf`, then a too strict `protobuf<7`, then torch calling `getpwuid()` for a UID
+  without a passwd entry - each caught by the build-time self-test or the integration suite, as
+  designed). The fourth passed. `GLINER_REVISION` is still `main`, not a pinned commit.
+- **macOS and `/bin/bash` 3.2 on BSD userland**: covered by the CI job only (the first run failed: `TMPDIR` ends with `/` on macOS; fixed).
 - **Podman** for real: only the fake-engine test of `--userns=keep-id`.
 - **Claude IDE Box end to end** (`up --try --pseudonymise` with a real Claude session): the hooks
   are a proposal with their own unit tests in Claude IDE Box; the integration test here uses a

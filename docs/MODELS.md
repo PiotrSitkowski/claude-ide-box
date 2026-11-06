@@ -16,7 +16,7 @@ card before a release that ships the model.
 | Candidate | Code licence | Weights licence | Languages | Status |
 |---|---|---|---|---|
 | **spaCy `xx_ent_wiki_sm` 3.8.0** (PER, ORG, LOC, MISC) | MIT (spaCy) | MIT, trained on WikiNER (CC BY 4.0) - **verified** in `explosion/spacy-models/meta/xx_ent_wiki_sm-3.8.0.json` | multilingual WikiNER (includes Polish, German, English) | **default**; measured below |
-| **GLiNER `urchade/gliner_multi-v2.1`** (zero-shot labels) | Apache-2.0 - **verified** (`urchade/GLiNER` LICENSE; `gliner` 0.2.30 on PyPI) | Apache-2.0 per third-party mirrors - **not verified** (model card on huggingface.co unreachable) | multilingual (mDeBERTa-v3 encoder); per-language quality **not measured** | supported (`--ner gliner`), not measured |
+| **GLiNER `urchade/gliner_multi-v2.1`** (zero-shot labels) | Apache-2.0 - **verified** (`urchade/GLiNER` LICENSE; `gliner` 0.2.30 on PyPI) | Apache-2.0 per third-party mirrors - **not verified** (model card on huggingface.co unreachable) | multilingual (mDeBERTa-v3 encoder) | supported (`--ner gliner`); measured in CI, below |
 | `urchade/gliner_multi` (v0) | Apache-2.0 | CC BY-NC 4.0 per search results - **not verified** | multilingual | excluded: non-commercial |
 | `urchade/gliner_multi_pii-v1` | Apache-2.0 | **not verified** | card lists en, fr, de, es, pt, it - **not verified**; no Polish listed | not used |
 | `fastino/gliner2-privacy-filter-PII-multi` (GLiNER2, 205M, 42 PII types, arXiv 2605.09973) | Apache-2.0 - **verified** (`fastino-ai/GLiNER2` LICENSE) | Apache-2.0 per a third-party copy - **not verified** | multilingual per the paper - **not verified** (arXiv unreachable) | promising next candidate; needs the `gliner2` package (different API), not implemented |
@@ -64,11 +64,34 @@ Observed weaknesses: many organisation names are tagged MISC (not used) or misse
 inside organisation names become LOCATION false positives, and German nouns at the start of a line
 ("Ansprechpartner") can become PERSON. 2.2-2.5 ms per short document on one CPU core.
 
+## Measured: GLiNER `urchade/gliner_multi-v2.1`
+
+Built and evaluated by CI (GitHub Actions, revision `main` at the time, CPU), inside the image under
+`--network none` ([eval/results-gliner-urchade-gliner_multi-v2.1.md](../eval/results-gliner-urchade-gliner_multi-v2.1.md)):
+
+| Type | Precision % | Recall % |
+|---|---:|---:|
+| PERSON | 100.0 | 100.0 |
+| ORG | 100.0 | 92.0 |
+| LOCATION | 92.5 | 100.0 |
+| DOB | 71.1 | 100.0 |
+
+| Language | Precision % | Recall % | Masked characters % |
+|---|---:|---:|---:|
+| Polish | 99.5 | 98.0 | 98.3 |
+| English | 95.2 | 97.3 | 99.0 |
+| German | 93.6 | 96.2 | 98.4 |
+
+178.5 ms per short document (spaCy: 2.5 ms). The "date of birth" label adds 13 false positives
+(ordinary dates); that costs readability, not privacy. Loading needs `protobuf` 7 and
+`sentencepiece`, and the container's UID has no passwd entry, so the image sets `USER`/`LOGNAME`;
+the build-time self-test runs as such a UID.
+
 ## Choosing the default
 
 1. Check the weights licence of `urchade/gliner_multi-v2.1` (and of the GLiNER2 PII model) on their
    model cards; pin `GLINER_REVISION` to a commit.
-2. Let CI build `--ner gliner` and run `eval/evaluate.py` inside the image; compare per language with
-   the table above.
-3. Switch the default only if GLiNER is better in Polish and not worse elsewhere, at an acceptable
-   image size and speed. Record the numbers here and in the README.
+2. Done: on this corpus GLiNER is better in every language, Polish most of all.
+3. If the licence checks out, switch `ARG NER` and `pii-airgap build` to `gliner`, pin
+   `GLINER_REVISION`, and decide whether 70 times the CPU time is acceptable (or keep spaCy for
+   quick scans and GLiNER for `try-prepare`).
