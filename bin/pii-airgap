@@ -484,7 +484,7 @@ cmd_build() {
     extra=(--secret "id=build_ca,src=$PII_AIRGAP_BUILD_CA")
   fi
   "$ENGINE" build -f "$root/image/Dockerfile" --build-arg "NER=$ner" \
-    --build-arg "GLINER_REVISION=${PII_AIRGAP_GLINER_REVISION:-main}" \
+    --build-arg "GLINER_REVISION=${PII_AIRGAP_GLINER_REVISION:-443d26d654e0324125a96bebd8e796c14ff2efe6}" \
     ${extra[@]+"${extra[@]}"} -t "$PA_IMAGE" "$root"
 }
 

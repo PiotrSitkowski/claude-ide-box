@@ -14,7 +14,9 @@ FROM ${BASE_IMAGE}
 ARG NER=spacy
 ARG TORCH_VERSION=2.9.1
 ARG GLINER_MODEL=urchade/gliner_multi-v2.1
-ARG GLINER_REVISION=main
+# Commit of urchade/gliner_multi-v2.1 on huggingface.co (lastModified 2025-12-08); pinned so a
+# rebuild gets the same weights. Licence: Apache-2.0 (model card, checked 2026-11-06).
+ARG GLINER_REVISION=443d26d654e0324125a96bebd8e796c14ff2efe6
 ARG SPACY_MODEL_URL=https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl
 ARG SPACY_MODEL_SHA256=6f3c4b853852ea9e9d2dc76cc950dddb10a7e4c42d813308caefe6c5e8be2f0a
 

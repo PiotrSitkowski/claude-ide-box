@@ -105,7 +105,8 @@ every cache entry miss.
   sandbox; the `gliner` image was built and tested only by CI. Its first three CI builds failed
   (missing `protobuf`, then a too strict `protobuf<7`, then torch calling `getpwuid()` for a UID
   without a passwd entry - each caught by the build-time self-test or the integration suite, as
-  designed). The fourth passed. `GLINER_REVISION` is still `main`, not a pinned commit.
+  designed). The fourth passed. Those builds used `GLINER_REVISION=main`; it is now pinned to commit
+  `443d26d` of the model repository.
 - **macOS and `/bin/bash` 3.2 on BSD userland**: covered by the CI job only (the first run failed: `TMPDIR` ends with `/` on macOS; fixed).
 - **Podman** for real: only the fake-engine test of `--userns=keep-id`.
 - **Claude IDE Box end to end** (`up --try --pseudonymise` with a real Claude session): the hooks

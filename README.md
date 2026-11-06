@@ -127,8 +127,10 @@ inside the image without network ([eval/results-gliner-urchade-gliner_multi-v2.1
 | GLiNER `gliner_multi-v2.1` | 98.5 | 99.0 | 98.5 | 92.9 | 100.0 | 226 ms |
 
 GLiNER finds more, mostly organisations, at about 90 times the CPU time, and its "date of birth"
-label marks ordinary dates too (14 false positives). It is not the default yet only because the
-licence of its weights has not been checked on the model card (see [docs/MODELS.md](docs/MODELS.md)).
+label marks ordinary dates too (14 false positives). Its weights are Apache-2.0 and the image pins
+one revision ([docs/MODELS.md](docs/MODELS.md)). **Use GLiNER for folders of documents full of
+names - contracts, correspondence:** it masks about 2.4 percentage points more of the personal data
+in Polish, at about 90 times the CPU time; spaCy stays the default for everything else.
 
 **Cases from the first end-to-end test.** Fifteen documents in the corpus reproduce, with invented
 data, what a first run with Claude IDE Box let through: names in table columns with no sentence
