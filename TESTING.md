@@ -26,7 +26,7 @@ dependency to install on every runner for no extra coverage.
 | File | Covers |
 |---|---|
 | `test_wrapper.sh` | dropping 0, 1 and 2 leading paths; subcommands and `/slash` prompts kept; stdout carries only the container's output; exit status and stdin passed through; container name and sanitisation; identical mount path; hardening flags; masks only for existing files (nested, directories, PrestaShop preset); read-only directories created with normal permissions; `GIT_WRITABLE`; recreate on a new secret file, refusal while a session is active; fail closed without daemon, without docker, without image, for `/`, `$HOME` and its parents; environment passed by name only with deny list and host-path filter; token never on a command line or in the log; host-path flags dropped, inline JSON kept, `..` escapes caught; parallel starts create one container; stale lock removal; invocation through a guard symlink; unknown config key fails closed; CPU clamping; automatic guard; paths with commas, quotes or newlines refused before `docker run` (mount-option injection); a symlinked secret is masked at the logical path when the project path itself contains a symlink; prompts that contain paths are not dropped; `~`-relative env values are not passed; invalid `MEMORY`/`CPUS`/`TMP_SIZE`/UID settings rejected; an active session is recognised for both `claude` and `claude.exe`; nested `.git` directories and files read-only, a new one triggers recreation; masks found inside `node_modules` and `vendor`; a masked file moved away (renamed parent) or replaced by a decoy stops the start until `up --recreate` |
-| `test_cli.sh` | `guard` on both bundled-binary layouts and several versions, idempotence, `--undo`, six concurrent runs keeping the original binary; `allow` validation and proxy reload; presets (`php`, `github` warning, `prestashop` per project); generated allowlist; `setup` (internal network with `inhibit_ipv4`, proxy attached at its fixed IP, UID/GID and version build args, profiles, build failure, no daemon); `up`, `up --recreate`, `down`, `rm`, `rm --volume`, `shell`, `status`, `logs`; `login --token-stdin` (mode 600, rejects garbage); `doctor` (healthy host, `useTerminal: true`, wrapper unset, legacy key, commented-out key, unguarded binary, `claude` running on the host, `claude` on PATH, no daemon, non-internal network, `git.autoRepositoryDetection` warning); modules: profile chains (`env:a.b`), user profiles and presets in `~/.config`, `profile`/`profiles`/`presets` commands, the current project's profiles built by `setup`, an unknown profile failing closed, a profile image with root-owned files in `/home/claude` rejected; `forward`: port validation, a TCP connection relayed through `docker exec ... socat`, loopback-only listener |
+| `test_cli.sh` | `guard` on both bundled-binary layouts and several versions, idempotence, `--undo`, six concurrent runs keeping the original binary; `allow` validation and proxy reload; presets (`php`, `github` warning, `prestashop` per project); generated allowlist; `setup` (internal network with `inhibit_ipv4`, proxy attached at its fixed IP, UID/GID and version build args, profiles, build failure, no daemon); `up`, `up --recreate`, `down`, `rm`, `rm --volume`, `shell`, `status`, `logs`; `login --token-stdin` (mode 600, rejects garbage); `doctor` (healthy host, `useTerminal: true`, wrapper unset, legacy key, commented-out key, unguarded binary, `claude` running on the host, `claude` on PATH, no daemon, non-internal network, `git.autoRepositoryDetection` warning); modules: profile chains (`env:a.b`), user profiles and presets in `~/.config`, `profile`/`profiles`/`presets` commands, the current project's profiles built by `setup`, an unknown profile failing closed, a profile image with root-owned files in `/home/claude` rejected; `forward`: port validation, a TCP connection relayed through `docker exec ... socat`, loopback-only listener; fixes from the first manual test: `cb_basename`/`cb_dirname` on names starting with `-` (`-zsh`, `-n`, `--`), `doctor` with login shells in `ps`, wrapper set only in an IDE profile (`User/profiles/<id>/settings.json`: ok there, warning elsewhere), `useTerminal` checked in profiles, failure when no file sets the wrapper, unguarded binaries only a warning with `AUTO_GUARD=0`; `login` (in a pseudo-terminal, Linux): the token is stored from the capture directory and never shown, the directory is mounted into a read-only, capability-free container and removed afterwards, pasting is the fallback; the token filter (node) masks tokens split across reads and wrapped in colour codes |
 | `test_pii.sh` | folders recorded by pii-airgap: no record, no check; the case from a manual test (a copy restored in place) refused before any container exists, stdout empty, the files named; a clean copy starts after a check with `--rm`, no network, read-only root, no capabilities, the copy and the map read-only, and the map never reaches the project container; a project inside a copy and a copy inside the project are checked; unrelated and vanished copies are ignored; a missing or replaced map refuses without running the check; a failed check refuses; control characters in file names from the copy never reach the terminal; `up` refuses too; a folder written by `restore --out` is refused with its own message |
 | `test_install.sh` | install, settings snippet, idempotence, refusing to overwrite foreign files, no sudo, `--uninstall` undoes guard and keeps config, `--prefix` |
 | `test_integration_skip.sh` | the integration suite says SKIPPED without Docker and fails when `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` |
@@ -38,6 +38,7 @@ dependency to install on every runner for no extra coverage.
 | Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 135 passed, 0 failed |
 | `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 135 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image); the first run there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
+| Ubuntu 24.04 (bash 5.2) and the `bash:3.2` image, fixes from the first manual test | 133 passed, 0 failed in each (the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking in the `bash:3.2` image) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
 commit as the code, but were run red before the implementation existed (35 of 39 wrapper tests and
@@ -54,6 +55,22 @@ first 11 failed (no record and an unrelated record pass without the feature), th
 test was added red afterwards. End to end, pii-airgap's integration suite (with
 `CLAUDE_IDE_BOX_SRC` pointing here) anonymises, restores and starts this wrapper in the restored
 copy and in the `--out` folder - both refused - and in the tokenised copy - not refused.
+
+The fixes from the first manual test on macOS were written the same way: 8 of the 10 new tests
+were red first (the two others guard behaviour that was already right: failing when no settings
+file sets the wrapper, and pasting the token by hand). One "passed" for the wrong reason at
+first: the token filter test looked for `node` on the sandbox's minimal `PATH`, did not find it and
+skipped; `run-unit.sh` now records `node` before the sandbox narrows `PATH`. Checked outside the
+unit tests, in real containers:
+
+- the login pipeline in `node:22-bookworm-slim` (the base image) on a real pseudo-terminal, with
+  a stand-in `claude` that prints a token the way `setup-token` does: the screen shows
+  `[token captured - not shown]`, the prompt for the code is visible before input, the token file
+  is mode 600, and the stand-in sees a 4096-column terminal (no wrapped token). The real
+  `claude setup-token` has not been run through it - that needs a Claude account;
+- `image/create-user.sh` in `node:22-bookworm-slim` and `ubuntu:24.04` for UID:GID 501:20,
+  1000:1000, 1000:20 and 1001:100: the user is `claude`, its group `claude` with the host GID, and
+  the home directory `claude:claude` in every case (before: `dialout` for GID 20).
 
 ## Integration tests
 
@@ -146,9 +163,32 @@ behaviour. Tick per platform.
 | 6 | Asking Claude to print `.env` shows an empty file | ☐ | ☐ | ☐ |
 | 7 | A file edit from the panel appears in the editor | ☐ | ☐ | ☐ |
 | 8 | Diffs and permission prompts work in the panel | ☐ | ☐ | ☐ |
-| 9 | Resuming a previous conversation works (history lives in the container volume) | ☐ | ☐ | ☐ |
+| 9 | Resuming a previous conversation works (history lives in the container volume; from the panel it does not yet - use `claude-ide-box shell`, `claude --resume`) | ☐ | ☐ | ☐ |
 | 10 | With `claudeProcessWrapper` removed but `guard` applied, the panel still lands in the container (check 3) | ☐ | ☐ | ☐ |
 | 11 | Compare panel behaviour with and without the wrapper: with it, the extension treats sessions as "programmatic" and skips a permission-mode migration (PLATFORM-NOTES) - note anything visible | ☐ | ☐ | ☐ |
 | 12 | Files created by Claude are owned by you on the host | ☐ | ☐ | ☐ |
 | 13 | Quitting Docker: the panel shows an error, nothing runs on the host | ☐ | ☐ | ☐ |
 | 14 | Antigravity and "Antigravity IDE" both use the wrapper (separate settings and extension dirs) | - | - | ☐ |
+
+### Results: macOS 15 (Intel), first full run
+
+Docker Desktop 4.98.0 (engine 29.9.2), VS Code 1.143.1, extension 2.1.319, installed as the README
+says, in a separate VS Code profile with `AUTO_GUARD=0` (no guard), commit `9ef342c`.
+
+Passed: Claude runs in the container and the host shows only `docker exec`; `~/.ssh` and
+`/Users/<you>/.ssh` are not visible, and of `/Users` only the project folder is; `.env` is empty in
+the container and untouched on the host; `curl example.com` gets a 403 from squid, listed by
+`logs`; no DNS; `.vscode` and `.git` are read-only (EROFS); writing the project works, files are
+owned by the user (`staff`); `CapEff`, `CapPrm` and `CapBnd` are 0; no `docker.sock`;
+`CLAUDE_CODE_MESSAGING_SOCKET`, `SSH_AUTH_SOCK` and `VSCODE_IPC_HOOK` do not reach the container.
+The extension passes one leading binary path, and also calls the wrapper for `auth status --json`.
+
+Found, and what happened to each:
+
+| Finding | Status |
+|---|---|
+| The panel's session history is empty and resuming from the panel does not work: the extension reads `~/.claude/projects` on the host | not fixed: a bind mount of the transcript directory would let the box write files that unboxed Claude Code reads (see [SECURITY.md](SECURITY.md#known-limitations)); workaround `claude-ide-box shell` + `claude --resume` |
+| `doctor`: `basename: illegal option -- z` for login shells (`-zsh`) | fixed for every `basename`/`dirname` on outside data |
+| `doctor` does not know IDE profiles | fixed |
+| `login` shows the token, which then has to be retyped | fixed: captured without being shown, pasting is the fallback |
+| Container group `dialout` (GID 20) | renamed to `claude` |
