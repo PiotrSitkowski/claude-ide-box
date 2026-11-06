@@ -90,7 +90,12 @@ or 1` and `CLAUDE.md stays writable` passed as refusal checks do, and the 2 cont
 were at first silently skipped because `node` is not on the sandbox `PATH` - the helper now records
 the host's node, and both failed red before `history.sh` existed. The red run also caught two
 mistakes in the tests themselves: "no `node` call" matched `nodev` in the tmpfs options, and an
-"upper-case UUID" made of digits was identical to the valid name.
+"upper-case UUID" made of digits was identical to the valid name. The CI log of the first run
+showed orphaned `sleep` processes from the copy's watchdog; the watchdog now stops its own `sleep`.
+In that period `test_live_lock_is_not_broken_while_its_pid_file_flickers` (timing-based, about 9 s)
+failed twice - once locally while images were being built, once on the macOS runner, whose second
+run of the same commit passed - and passed in 12 isolated and 3 full runs on this branch and on
+`main` alike; whether the change makes it more likely is not established.
 
 ## Integration tests
 
