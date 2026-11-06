@@ -42,6 +42,8 @@ fi
 . "$CB_LIB/common.sh"
 # shellcheck source=lib/claude-ide-box/guard.sh
 . "$CB_LIB/guard.sh"
+# shellcheck source=lib/claude-ide-box/history.sh
+. "$CB_LIB/history.sh"
 
 cb_init_paths
 cb_init_state
@@ -164,6 +166,15 @@ fi
 # ---------------------------------------------------------------------------
 cb_find_docker
 cb_ensure_container
+
+# ---------------------------------------------------------------------------
+# 6b. COPY_HISTORY=1: copy finished transcripts of earlier sessions from the
+#     container volume to ~/.claude/projects on the host, in the background
+#     (this script ends in exec, so nothing can run after a session).
+# ---------------------------------------------------------------------------
+if [ "$CFG_COPY_HISTORY" = "1" ]; then
+  cb_history_copy_bg
+fi
 
 # ---------------------------------------------------------------------------
 # 7. Environment for the container: names only on the command line; docker
