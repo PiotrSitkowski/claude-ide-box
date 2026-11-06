@@ -131,7 +131,15 @@ cb_run_limited() {
   shift 2
   "$@" >"$out" 2>/dev/null </dev/null &
   pid=$!
-  (sleep "$secs"; kill "$pid" 2>/dev/null) >/dev/null 2>&1 &
+  # The watchdog takes its sleep with it when it is stopped, so no orphaned
+  # sleep outlives a finished command.
+  (
+    sleep "$secs" &
+    s=$!
+    trap 'kill "$s" 2>/dev/null; exit 0' TERM
+    wait "$s"
+    kill "$pid" 2>/dev/null
+  ) >/dev/null 2>&1 &
   wd=$!
   st=0
   wait "$pid" || st=$?
