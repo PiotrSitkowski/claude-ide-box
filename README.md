@@ -179,7 +179,7 @@ claude-ide-box up --recreate            # masks apply when the container is crea
 ```
 
 Pseudonymised sessions build on Claude IDE Box's `up --try` mode (Claude works on a copy of the
-project). The hooks below are proposed for Claude IDE Box and not merged yet; until then the two
+project). The hooks below are proposed for Claude IDE Box ([PR #3](https://github.com/PiotrSitkowski/claude-ide-box/pull/3)) and not merged yet; until then the two
 steps can be run by hand around a try session (`pii-airgap try-prepare DIR` right after the copy is
 made and before the container starts, `pii-airgap try-restore DIR` before `try apply`):
 

@@ -57,6 +57,8 @@ Usage: pii-airgap <command> [arguments]
                         build the image (the model is downloaded at build time)
   version | help
 
+Claude IDE Box: https://github.com/PiotrSitkowski/claude-ide-box
+
 User lists (client names, project code names): ~/.config/pii-airgap/lists/*.txt,
 one 'term' or 'TYPE: term' per line. They must live outside scanned folders.
 

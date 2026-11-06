@@ -32,7 +32,7 @@ Covers: every container gets `--rm`, `--network none`, `--read-only`, `--cap-dro
 directory or the state directory; cache and lists mounts; options and stdout passed through; the
 container's exit status; lists inside the scanned folder refused; no daemon or no image fails
 before anything runs; paths with commas refused; rootless Podman gets `--userns=keep-id`;
-`mask-add` writes the right Claude IDE Box file, keeps other settings, does not duplicate, refuses
+`mask-add` writes the right [Claude IDE Box](https://github.com/PiotrSitkowski/claude-ide-box) file, keeps other settings, does not duplicate, refuses
 paths outside the project, with spaces or glob characters, or missing; the container name equals
 Claude IDE Box's own `cb_container_name` for odd names (skipped without `CLAUDE_IDE_BOX_SRC`);
 `try-prepare` scans read-only without the map, then pseudonymises with the map in a 700 directory

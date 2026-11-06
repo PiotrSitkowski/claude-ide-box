@@ -2,7 +2,7 @@
 
 ## Goal
 
-Lower the amount of personal data an AI agent (Claude Code in Claude IDE Box, or anything else
+Lower the amount of personal data an AI agent (Claude Code in [Claude IDE Box](https://github.com/PiotrSitkowski/claude-ide-box), or anything else
 that works on a folder) sends to its provider, without sending anything anywhere else and without
 pretending to be complete.
 
