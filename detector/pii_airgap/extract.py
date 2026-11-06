@@ -80,6 +80,7 @@ def _xlsx(z, budget):
                 else:
                     cells.append(html.unescape("".join(re.findall(r"<t[^>]*>(.*?)</t>", body or "", re.S))))
             out.append("\t".join(cells))
+        out.append("")  # a blank line ends the sheet's table
     for n in sorted(x for x in names if re.match(r"^xl/comments\d*\.xml$", x)):
         out.append(_xml_text(_zip_read(z, n, budget)))
     return "\n".join(out)

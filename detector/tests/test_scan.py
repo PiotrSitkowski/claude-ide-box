@@ -120,9 +120,9 @@ class ScanTests(unittest.TestCase):
         calls = []
         orig = d.detect
 
-        def detect(text):
+        def detect(text, **kw):
             calls.append(text)
-            return orig(text)
+            return orig(text, **kw)
 
         d.detect = detect
         return d, calls

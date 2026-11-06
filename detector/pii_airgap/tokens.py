@@ -14,6 +14,8 @@ import re
 import stat
 from collections import Counter
 
+from .detect import sniff_delimiter
+
 STRICT = re.compile(r"\[([A-Z]+)_([0-9]+)\]")
 MAP_FORMAT = "pii-airgap-map/1"
 LINK_TYPES = ("ner",)  # sources that do not block on file names
@@ -96,13 +98,13 @@ def _line_of(text, pos):
     return text.count("\n", 0, pos) + 1
 
 
-def anonymise_text(text, detector, tmap, where="input"):
+def anonymise_text(text, detector, tmap, where="input", table=None):
     m = STRICT.search(text)
     if m:
         raise TokenCollision("%s line %d already contains token-shaped text %s"
                              % (where, _line_of(text, m.start()), m.group(0)))
     pieces, last = [], 0
-    for f in sorted(detector.detect(text), key=lambda f: f.start):
+    for f in sorted(detector.detect(text, table=table), key=lambda f: f.start):
         pieces.append(text[last:f.start])
         pieces.append(tmap.token_for(f.type, f.text))
         last = f.end
@@ -256,8 +258,11 @@ def anonymise_tree(root, map_path, detector, git="refuse", documents_with_pii=()
                     blockers.append("%s: not UTF-8 and looks like it holds PII (convert it or mask it)" % rel)
             rep.skipped.append((rel, why))
             continue
+        table = None
+        if rel.lower().endswith((".csv", ".tsv")):
+            table = "\t" if rel.lower().endswith(".tsv") else sniff_delimiter(text)
         try:
-            new = anonymise_text(text, detector, tmap, where=rel)
+            new = anonymise_text(text, detector, tmap, where=rel, table=table)
         except TokenCollision as e:
             collisions.append(str(e))
             continue
