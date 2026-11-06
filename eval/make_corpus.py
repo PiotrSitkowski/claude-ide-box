@@ -270,6 +270,35 @@ def fill(lang, tpl):
     return text, ents
 
 
+# Cases from the first end-to-end test with Claude IDE Box (written as
+# synthetic equivalents): names in table columns with no sentence around
+# them, a first name left next to a token, company names with a legal form,
+# and a capitalised first word of a sentence taken for a place. Literal,
+# counted once. CSV documents carry their delimiter.
+FIELD_CASES = [
+    ("pl", ",", "imie_nazwisko,email,miasto\n[[PERSON:Anna Nowak]],[[EMAIL:anna.nowak@example.pl]],[[LOCATION:Kraków]]\n"
+                "[[PERSON:Jan Kowalski]],[[EMAIL:jan.kowalski@example.pl]],[[LOCATION:Gdańsk]]\n"
+                "[[PERSON:Zofia Wiśniewska]],[[EMAIL:z.wisniewska@example.pl]],[[LOCATION:Lublin]]\n"),
+    ("pl", None, "Pan [[PERSON:Jan Kowalski]] podpisał umowę w imieniu [[ORG:Bursztynowe Okna Sp. z o.o.]]"),
+    ("pl", None, "Zawarta pomiędzy [[ORG:Wiślańska Logistyka sp. z o.o.]] a [[PERSON:Janem Kowalskim]]."),
+    ("pl", None, "Wczoraj rozmawiałem z panią [[PERSON:Agnieszką Kamińską]] o fakturze."),
+    ("pl", None, "Podpisano w [[LOCATION:Poznaniu]] przez [[ORG:Mazowiecki Dom Mediowy S.A.]]"),
+    ("en", ",", "Name,Email,City\n[[PERSON:Mary Johnson]],[[EMAIL:mary.j@example.com]],[[LOCATION:Boston]]\n"
+                "[[PERSON:David Miller]],[[EMAIL:david.miller@example.com]],[[LOCATION:Denver]]\n"),
+    ("en", None, "Mr [[PERSON:John Smith]] signed the lease on behalf of [[ORG:Ashford Robotics Inc.]]"),
+    ("en", None, "Signed between [[ORG:Harbor & Pine LLP]] and [[ORG:Crescent Valley Bank Ltd]]."),
+    ("de", ";", "Vorname;Nachname;Ort\n[[PERSON:Lukas]];[[PERSON:Schmidt]];[[LOCATION:Berlin]]\n"
+                "[[PERSON:Hannah]];[[PERSON:Weber]];[[LOCATION:Köln]]\n"),
+    ("de", None, "Herr [[PERSON:Jonas Becker]] unterschreibt für die [[ORG:Nordwind Handels GmbH]]."),
+    ("de", None, "Geschlossen zwischen [[ORG:Bergmann & Söhne KG]] und [[ORG:Alpenblick Software GmbH]]."),
+    ("pl", "|", "| Imię i nazwisko | Stanowisko |\n|---|---|\n| [[PERSON:Ewa Lis]] | księgowa |\n"
+                "| [[PERSON:Jan Bąk]] | kierowca |\n| [[PERSON:Ola Kot]] | recepcja |\n"),
+    ("pl", None, "Umowa obowiązuje od 1 marca. Zawarta na czas nieokreślony, może zostać wypowiedziana."),
+    ("pl", None, "[[PERSON:Jan Kowalski]], dyrektor finansowy, zatwierdził budżet."),
+    ("en", "\t", "Full name\tDepartment\n[[PERSON:Amy Lee]]\tsales\n[[PERSON:Bo Ng]]\tsupport\n"),
+]
+
+
 def main():
     n = 0
     for lang in ("pl", "en", "de"):
@@ -281,6 +310,12 @@ def main():
                 n += 1
                 sys.stdout.write(json.dumps({"id": "%s-%02d-%d" % (lang, i, rep), "lang": lang, "text": text,
                                              "entities": ents}, ensure_ascii=False) + "\n")
+    for i, (lang, delim, tpl) in enumerate(FIELD_CASES):
+        text, ents = fill(lang, tpl)
+        doc = {"id": "field-%02d" % i, "lang": lang, "text": text, "entities": ents}
+        if delim:
+            doc["format"], doc["delimiter"] = "csv", delim
+        sys.stdout.write(json.dumps(doc, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":

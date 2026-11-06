@@ -8,6 +8,7 @@ prediction, whatever its type: what pseudonymisation actually hides.
 """
 
 import argparse
+import inspect
 import json
 import os
 import sys
@@ -19,6 +20,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from pii_airgap.detect import Detector  # noqa: E402
 from pii_airgap.ner import load_backend  # noqa: E402
 
+# Table-aware detection (headers naming a person column) where supported.
+_TABLES = "table" in inspect.signature(Detector.detect).parameters
+
 
 def score(docs, detector):
     tp, fp, fn = defaultdict(int), defaultdict(int), defaultdict(int)
@@ -27,7 +31,10 @@ def score(docs, detector):
     elapsed = 0.0
     for d in docs:
         t0 = time.time()
-        preds = detector.detect(d["text"])
+        if d.get("format") == "csv" and _TABLES:
+            preds = detector.detect(d["text"], table=d["delimiter"])
+        else:
+            preds = detector.detect(d["text"])
         elapsed += time.time() - t0
         used = set()
         for g in d["entities"]:
@@ -51,6 +58,39 @@ def score(docs, detector):
                 fp[p.type] += 1
                 per_lang[d["lang"]][1] += 1
     return tp, fp, fn, chars, per_lang, elapsed
+
+
+def field_report(docs, detector):
+    """Per document of the field cases: each labelled value fully masked,
+    partly masked or missed, and each finding that matches nothing."""
+    rows = []
+    totals = {"full": 0, "partial": 0, "missed": 0, "false": 0}
+    for d in docs:
+        if not d["id"].startswith("field-"):
+            continue
+        if d.get("format") == "csv" and _TABLES:
+            preds = detector.detect(d["text"], table=d["delimiter"])
+        else:
+            preds = detector.detect(d["text"])
+        notes = []
+        for g in d["entities"]:
+            covered = sum(1 for c in range(g["start"], g["end"]) if any(p.start <= c < p.end for p in preds))
+            size = g["end"] - g["start"]
+            text = d["text"][g["start"]:g["end"]]
+            if covered == size:
+                totals["full"] += 1
+            elif covered:
+                totals["partial"] += 1
+                notes.append("partly %s `%s`" % (g["type"], text))
+            else:
+                totals["missed"] += 1
+                notes.append("**missed** %s `%s`" % (g["type"], text))
+        for p in preds:
+            if not any(p.start < g["end"] and g["start"] < p.end for g in d["entities"]):
+                totals["false"] += 1
+                notes.append("false %s `%s`" % (p.type, d["text"][p.start:p.end]))
+        rows.append((d["id"], d["lang"], "; ".join(notes) or "all masked"))
+    return rows, totals
 
 
 def pct(a, b):
@@ -79,6 +119,14 @@ def main():
     for lang in ("pl", "en", "de"):
         a, b, c = per_lang[lang]
         print("| %s | %s | %s | %s |" % (lang, pct(a, a + b), pct(a, a + c), pct(chars[lang][0], chars[lang][1])))
+    rows, totals = field_report(docs, det)
+    if rows:
+        print("\nField cases (from the end-to-end test): %d values fully masked, %d partly, %d missed; "
+              "%d false findings\n" % (totals["full"], totals["partial"], totals["missed"], totals["false"]))
+        print("| Case | Language | Result |")
+        print("|---|---|---|")
+        for case, lang, note in rows:
+            print("| %s | %s | %s |" % (case, lang, note))
 
 
 if __name__ == "__main__":
