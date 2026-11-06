@@ -943,6 +943,8 @@ cb_container_busy() {
 # configuration. Must be called with stdout pointing away from the IDE.
 cb_ensure_container() {
   local image image_id hash state running label
+  # A pseudonymised copy holding real personal data never gets a container.
+  cb_pii_check
   cb_require_profiles "$CFG_PROFILE"
   image="$(cb_image_for_profile "$CFG_PROFILE")"
 

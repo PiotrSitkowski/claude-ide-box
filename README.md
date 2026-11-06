@@ -223,6 +223,19 @@ creates its container (a few seconds); later sessions reuse it.
 > container so the file is masked. If a session is still running in the old container, the wrapper
 > refuses to start a new one and tells you to run `claude-ide-box up --recreate`.
 
+### Pseudonymised copies (pii-airgap)
+
+With [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap), personal data in a copy of a
+project can be replaced by tokens before Claude sees it. `pii-airgap anonymise` records each such
+copy, and `pii-airgap restore --out` records the folder it writes the real values to. Before any
+container starts (the wrapper, `up`, `shell`), Claude IDE Box checks every recorded folder that is
+the project, contains it or lies inside it: pii-airgap's own image, in a throw-away container
+without network, gets the folder and its token map read-only and reports files that hold values of
+the map in clear text. If it finds any - a restored folder always holds them, a copy does after an
+in-place restore or when a value was written into it - or if the map is gone, was replaced or the
+check cannot run, nothing starts and the message names the files (never the values). The project
+container never sees the map.
+
 ## What runs in the box
 
 Claude IDE Box is not tied to one language. The **base image** is a general Linux workstation for

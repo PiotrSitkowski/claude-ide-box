@@ -80,6 +80,12 @@ case "$cmd" in
   run)
     need_daemon
     case " $* " in
+      *" verify /copy --map /map.json "*)
+        # pii-airgap's check of a pseudonymised copy, run before a start
+        printf '%s\n' "$@" >"$dir/verify.args"
+        printf '%b' "${FAKE_PII_VERIFY_OUT:-}"
+        exit "${FAKE_PII_VERIFY_STATUS:-0}"
+        ;;
       *" --rm "*)
         # setup's home-ownership check of a freshly built profile image
         printf '%s' "${FAKE_HOME_FOREIGN:-}"
