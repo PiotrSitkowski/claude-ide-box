@@ -465,7 +465,7 @@ script_root() {
 }
 
 cmd_build() {
-  local ner=gliner root
+  local ner=spacy root
   while [ $# -gt 0 ]; do
     case "$1" in
       --ner) [ $# -ge 2 ] || die "--ner needs gliner, spacy or none"; ner="$2"; shift 2 ;;

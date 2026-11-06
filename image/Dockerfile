@@ -2,16 +2,16 @@
 # NER model, all baked in at build time. At run time the container gets
 # --network none, so nothing can be downloaded or sent anywhere.
 #
-#   docker build -f image/Dockerfile --build-arg NER=gliner -t pii-airgap .
+#   docker build -f image/Dockerfile --build-arg NER=spacy -t pii-airgap .
 #
-# NER=gliner  GLiNER (default; needs huggingface.co and download.pytorch.org
+# NER=gliner  GLiNER (needs huggingface.co and download.pytorch.org
 #             while building)
-# NER=spacy   spaCy xx_ent_wiki_sm (needs github.com while building)
+# NER=spacy   spaCy xx_ent_wiki_sm (default; needs github.com while building)
 # NER=none    checksums, patterns and user lists only
 ARG BASE_IMAGE=docker.io/library/ubuntu:24.04
 FROM ${BASE_IMAGE}
 
-ARG NER=gliner
+ARG NER=spacy
 ARG TORCH_VERSION=2.9.1
 ARG GLINER_MODEL=urchade/gliner_multi-v2.1
 ARG GLINER_REVISION=main

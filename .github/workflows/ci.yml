@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck 0.11
+        run: |
+          docker run --rm -v "$PWD":/mnt:ro -w /mnt koalaman/shellcheck:v0.11.0 -x \
+            bin/pii-airgap tests/run-unit.sh tests/unit/helpers.sh tests/unit/test_wrapper.sh \
+            tests/unit/fake-bin/docker tests/integration/run.sh
+
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Claude IDE Box sources (container-name cross-check)
+        uses: actions/checkout@v4
+        with:
+          repository: PiotrSitkowski/claude-ide-box
+          path: .cib
+      - name: Shell unit tests (macOS uses /bin/bash 3.2)
+        run: CLAUDE_IDE_BOX_SRC="$PWD/.cib" /bin/bash tests/run-unit.sh
+      - name: Shell unit tests in the official bash:3.2 image
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD":/src:ro bash:3.2 \
+            bash -c 'cp -r /src /w && cd /w && CLAUDE_IDE_BOX_SRC=/w/.cib TMPDIR=/tmp bash tests/run-unit.sh'
+      - name: Python unit tests (standard library only)
+        run: cd detector && python3 -m unittest discover -s tests -t . -v
+
+  python-versions:
+    strategy:
+      matrix:
+        python: ["3.9", "3.12", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: cd detector && python -m unittest discover -s tests -t .
+
+  evaluation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Corpus is reproducible
+        run: python3 eval/make_corpus.py | diff - eval/corpus.jsonl
+      - name: Scores without NER match the README
+        run: |
+          python3 eval/evaluate.py >/tmp/none.md
+          diff <(grep -v '^Corpus:' /tmp/none.md) <(grep -v '^Corpus:' eval/results-none.md)
+      - name: Scores with spaCy xx_ent_wiki_sm match the README
+        run: |
+          python3 -m venv /tmp/v && . /tmp/v/bin/activate
+          pip install -q -r image/requirements-spacy.txt
+          url=https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.8.0/xx_ent_wiki_sm-3.8.0-py3-none-any.whl
+          curl -sSLo /tmp/xx_ent_wiki_sm-3.8.0-py3-none-any.whl "$url"
+          echo "6f3c4b853852ea9e9d2dc76cc950dddb10a7e4c42d813308caefe6c5e8be2f0a  /tmp/xx_ent_wiki_sm-3.8.0-py3-none-any.whl" | sha256sum -c -
+          pip install -q --no-deps /tmp/xx_ent_wiki_sm-3.8.0-py3-none-any.whl
+          python eval/evaluate.py --ner spacy:xx_ent_wiki_sm >/tmp/spacy.md
+          diff <(grep -v '^Corpus:' /tmp/spacy.md) <(grep -v '^Corpus:' eval/results-spacy-xx_ent_wiki_sm.md)
+
+  integration:
+    needs: [shellcheck, unit]
+    strategy:
+      fail-fast: false
+      matrix:
+        ner: [none, spacy, gliner]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space for the model
+        if: matrix.ner == 'gliner'
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+      - name: Build the image (NER=${{ matrix.ner }})
+        run: docker build -f image/Dockerfile --build-arg NER=${{ matrix.ner }} -t pii-airgap:${{ matrix.ner }} .
+      - name: Image size
+        run: docker image ls pii-airgap
+      - name: Integration tests
+        run: PII_AIRGAP_IMAGE=pii-airgap:${{ matrix.ner }} PII_AIRGAP_REQUIRE_DOCKER=1 tests/integration/run.sh
+      - name: Evaluation inside the image, without network
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp -v "$PWD":/r:ro --entrypoint python3 \
+            pii-airgap:${{ matrix.ner }} -P /r/eval/evaluate.py --ner "${{ matrix.ner }}" | tee eval-${{ matrix.ner }}.md
+          cat eval-${{ matrix.ner }}.md >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-${{ matrix.ner }}
+          path: eval-${{ matrix.ner }}.md

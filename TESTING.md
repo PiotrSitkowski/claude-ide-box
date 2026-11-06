@@ -1,0 +1,107 @@
+# Testing
+
+What is verified automatically, where, and what is not.
+
+| Layer | Command | Needs |
+|---|---|---|
+| Static analysis | `shellcheck -x bin/pii-airgap tests/...` (see CI) | shellcheck 0.11 |
+| Python unit | `cd detector && python3 -m unittest discover -s tests -t .` | Python 3.9+ only (`pdftotext` optional) |
+| Shell unit | `tests/run-unit.sh [filter]` | bash 3.2+; `CLAUDE_IDE_BOX_SRC=<checkout>` enables the container-name cross-check |
+| Integration | `PII_AIRGAP_IMAGE=pii-airgap:spacy tests/integration/run.sh` | Docker or Podman and a built image |
+| Evaluation | `python3 eval/evaluate.py [--ner SPEC]` | the corpus in `eval/`; spaCy for `--ner spacy` |
+
+## Python unit tests (70)
+
+| File | Covers |
+|---|---|
+| `test_validators.py` (16) | every check-digit algorithm with specimen numbers from the specifications, and with one digit changed, wrong lengths, impossible dates |
+| `test_detect.py` (13) | exact spans; bad checksums ignored; digits inside longer numbers ignored; weak checksums only with a context word; national IDs of PL, US, DE, ES, IT, NL; dates of birth only after a birth keyword; addresses in PL/DE/EN; local phone numbers only after "tel."; user lists (whole words, case-insensitive, file format); NER findings merged and losing overlaps to checksums |
+| `test_tokens.py` (18) | same value same token, counters per type, exact text as key; refusal of token-shaped originals; round trip; unknown and ten kinds of altered tokens reported; near misses already in the original ignored; map file 600 in a 700 directory; trees: untouched files restored byte for byte, edits and new files restored, nothing written on a problem, `--keep-unresolved`, refusal on token-shaped text, documents with PII, git metadata at any depth and PII in file names - each leaving the tree unchanged; symlinks never followed |
+| `test_scan.py` (8) | DOCX, XLSX, PDF (when `pdftotext` exists) extraction; binary files; zip bomb refused; report without values, with lines and confidence; cache reused for unchanged files, invalidated by content and by detector configuration, never holding values; symlinks not followed |
+| `test_ner.py` (6) | chunking keeps offsets; GLiNER and spaCy label mapping (with fake models, no download); offsets across chunks; fingerprints differ per model; a missing model directory is an error |
+| `test_cli.py` (9) | text and JSON reports, no value printed, NER warning; `--fail-on-pii`; an unloadable model fails closed with empty stdout; bad list file; anonymise/restore exit codes and messages; documents from a scan report block; `system-prompt` |
+
+## Shell unit tests (21)
+
+`tests/run-unit.sh` runs each `test_*` function in a subshell with `set -e`, a private `HOME` and a
+fake `docker` first on `PATH` that records every call. The wrapper is started with `$BASH`, so the
+macOS job tests `/bin/bash` 3.2 and the `bash:3.2` image job tests bash 3.2 on busybox.
+
+Covers: every container gets `--rm`, `--network none`, `--read-only`, `--cap-drop ALL`,
+`no-new-privileges` and the caller's UID, the project read-only, never the Docker socket, the home
+directory or the state directory; cache and lists mounts; options and stdout passed through; the
+container's exit status; lists inside the scanned folder refused; no daemon or no image fails
+before anything runs; paths with commas refused; rootless Podman gets `--userns=keep-id`;
+`mask-add` writes the right Claude IDE Box file, keeps other settings, does not duplicate, refuses
+paths outside the project, with spaces or glob characters, or missing; the container name equals
+Claude IDE Box's own `cb_container_name` for odd names (skipped without `CLAUDE_IDE_BOX_SRC`);
+`try-prepare` scans read-only without the map, then pseudonymises with the map in a 700 directory
+outside the try root, stops when the scan fails, passes the refusal status through with advice;
+`try-restore` mounts the map read-only and the snapshot as baseline; no try copy or no map fails;
+`try-forget`; `system-prompt`; unknown commands; help text carries the "not a compliance tool"
+statement.
+
+## Integration tests (30 with a model, 29 without)
+
+`tests/integration/run.sh` uses the real image and engine. It builds fixtures (DOCX, XLSX with
+inline strings, a PDF, a PNG scan rendered from it and a legacy `.doc` converted by LibreOffice
+inside the image) and checks: each format is read by the intended method and the expected types
+are found; no value in the report or the cache; the project is unchanged by a scan; with a model,
+names are found under `--network none` with no lists (proves the model is baked in); the second
+scan comes from the cache. Then the whole try flow on a directory laid out like Claude IDE Box's
+try copy: refusal on documents with PII (status 3, names them, nothing changed); after the
+documents are blanked, tokens in the copy, `.git` removed, no value left, map 600 outside the try
+root, files keep the host owner; an altered token stops restoration (status 4, file and line,
+nothing written); after fixing it, untouched files equal the snapshot byte for byte and edited and
+new files get the real values; `try-forget`.
+
+## Results
+
+| Environment | Result |
+|---|---|
+| Python 3.13, Ubuntu 24.04 (development sandbox) | 70 passed |
+| Shell unit, GNU bash 5.2, with `CLAUDE_IDE_BOX_SRC` | 21 passed |
+| Shell unit, `bash:3.2` image (bash 3.2.57, musl, busybox), with `CLAUDE_IDE_BOX_SRC` | 21 passed |
+| shellcheck 0.11.0 | clean |
+| Integration, Docker 29.9.2, image `NER=spacy` (1.36 GB) | 30 passed |
+| Integration, Docker 29.9.2, image `NER=none` (0.90 GB) | 29 passed |
+| Evaluation inside the `spacy` image under `--network none` | identical to the host run |
+| CI (GitHub Actions) | not run yet when this was written |
+
+## Written test-first
+
+Each stage's tests were committed with the code, but run red before the implementation existed:
+
+- validators, detector, tokens and scanning: the four test modules (55 tests) failed to import;
+- NER backends and CLI: `test_ner` (6) failed to import, all 9 CLI tests failed;
+- short backend names (`--ner gliner`): 1 of 1 red;
+- the shell wrapper: the first run showed 5 of 21 passing - the harness ran test functions without
+  `set -e` inside a command substitution, so a failed assertion did not stop a test. Fixed, the
+  real red run was 18 failed, 2 passed vacuously (refusal tests, which a missing script also
+  "passes"), 1 skipped (cross-check without `CLAUDE_IDE_BOX_SRC`).
+
+Problems the tests found on the way: tokens were numbered from the end of the text; a short PDF
+was sent to OCR because the "has a text layer" threshold counted characters per file instead of
+looking at each page (now per page, which also handles mixed PDFs); a PESEL in a test had a wrong
+check digit (the validator was right); spaCy entities were not returned in text order;
+`mask-add` refused to re-add an already masked, since deleted file; the first integration run had
+three failures - two test bugs and one assertion that depended on the model (spaCy tags the word
+"karta" as an organisation), now checked as "contains the expected types". A review before any
+test caught that the model fingerprint used Python's randomised `hash()`, which would have made
+every cache entry miss.
+
+## Not tested, and why
+
+- **GLiNER.** huggingface.co and download.pytorch.org were blocked in the development sandbox, so the
+  `NER=gliner` image was never built and its quality never measured. The CI matrix builds it and
+  runs the integration tests and the evaluation inside it; until that has passed, treat the GLiNER
+  path (including `image/fetch-model.py` fetching the encoder for offline use) as untested.
+- **macOS and `/bin/bash` 3.2 on BSD userland**: covered by the CI job only.
+- **Podman** for real: only the fake-engine test of `--userns=keep-id`.
+- **Claude IDE Box end to end** (`up --try --pseudonymise` with a real Claude session): the hooks
+  are a proposal with their own unit tests in Claude IDE Box; the integration test here uses a
+  directory laid out like its try copy.
+- **How well Claude keeps tokens intact** with the appended prompt: needs real sessions; the
+  restoration side is what is tested.
+- **OCR quality** on real scans, photos and handwriting; only a clean rendered page is tested.
+- **Real documents.** The corpus is synthetic; see the README on how to read the numbers.
