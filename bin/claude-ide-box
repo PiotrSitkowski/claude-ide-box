@@ -57,8 +57,11 @@ Setup
 Current project (the working directory)
   up [--recreate] [--try]     create/start the project container; --try works on a
                               throw-away copy of the project instead
+  up --try --pseudonymise     the copy gets [TYPE_N] tokens instead of personal data
+                              (needs pii-airgap; real values return before diff/apply)
   try [diff|apply|discard|end]
                               review the copy's changes, then apply or discard them
+  pii ARGS...                 run pii-airgap (scan, mask-add, ...) if it is installed
   down                        stop it
   rm [--volume]               remove it (--volume also deletes its home volume,
                               i.e. conversation history and ~/.claude)
@@ -529,15 +532,17 @@ cmd_login() {
 # --------------------------------------------------------------------------
 
 cmd_up() {
-  local recreate=0 try=0
+  local recreate=0 try=0 pseudonymise=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --recreate) recreate=1 ;;
       --try) try=1 ;;
-      *) cb_die "usage: claude-ide-box up [--recreate] [--try]" ;;
+      --pseudonymise | --pseudonymize) pseudonymise=1 ;;
+      *) cb_die "usage: claude-ide-box up [--recreate] [--try [--pseudonymise]]" ;;
     esac
     shift
   done
+  [ "$pseudonymise" = 0 ] || [ "$try" = 1 ] || cb_die "--pseudonymise works on a try copy only: claude-ide-box up --try --pseudonymise"
   project_from_pwd
   cb_load_config
   cb_find_docker
@@ -552,7 +557,7 @@ cmd_up() {
     CB_ACCEPT_MASK_CHANGES=1
   fi
   if [ "$try" = 1 ]; then
-    cmd_up_try
+    cmd_up_try "$pseudonymise"
     return 0
   fi
   cb_ensure_container
@@ -1506,6 +1511,11 @@ main() {
     doctor) cmd_doctor "$@" ;;
     quickstart) cmd_quickstart "$@" ;;
     try) cmd_try "$@" ;;
+    pii)
+      command -v "${CLAUDE_IDE_BOX_PII:-pii-airgap}" >/dev/null 2>&1 ||
+        cb_die "pii-airgap is not installed (see 'Ecosystem' in the README)"
+      exec "${CLAUDE_IDE_BOX_PII:-pii-airgap}" "$@"
+      ;;
     *) cb_die "unknown command '$cmd' (see 'claude-ide-box help')" ;;
   esac
 }

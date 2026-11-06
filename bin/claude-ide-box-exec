@@ -171,6 +171,22 @@ fi
 cb_find_docker
 cb_ensure_container
 
+# A pseudonymised try session: tell Claude that [TYPE_N] tokens are
+# immutable. Only for sessions (stream-json from the IDE, --print, or the
+# interactive CLI), not for one-shot subcommands such as --version.
+if [ "$CB_TRY" = 1 ] && [ "$(cat "$CB_TRY_ROOT/pii" 2>/dev/null || true)" = tokens ]; then
+  session=0
+  [ ${#args[@]} -gt 0 ] || session=1
+  for a in ${args[@]+"${args[@]}"}; do
+    case "$a" in --input-format | --input-format=* | -p | --print) session=1 ;; esac
+  done
+  if [ "$session" = 1 ]; then
+    [ -s "$CB_TRY_ROOT/pii-prompt" ] || cb_die "pseudonymised session without $CB_TRY_ROOT/pii-prompt; run 'claude-ide-box up --try' again"
+    args+=(--append-system-prompt "$(cat "$CB_TRY_ROOT/pii-prompt")")
+    cb_log "pseudonymised try session: token instructions appended to the system prompt"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # 7. Environment for the container: names only on the command line; docker
 #    reads the values from our environment, so they never show up in `ps`.
