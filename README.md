@@ -39,13 +39,14 @@ relying on it.
 - [Threat model](#threat-model)
 - [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows with WSL2](#windows-with-wsl2)
 - [Daily use](#daily-use)
-- [What runs in the box](#what-runs-in-the-box) - [dev servers](#dev-servers-react-vite-next-django-) · [office documents](#office-documents)
+- [What runs in the box](#what-runs-in-the-box) - [dev servers](#dev-servers-react-vite-next-django-) · [office documents](#office-documents) · [personal data](#personal-data-in-the-project)
 - [Modules](#modules)
 - [Network allowlist](#network-allowlist)
 - [Configuration](#configuration)
 - [Updating Claude Code](#updating-claude-code)
 - [Troubleshooting](#troubleshooting)
 - [Uninstall](#uninstall)
+- [Ecosystem](#ecosystem)
 - [Development](#development)
 
 ## How it works
@@ -116,6 +117,11 @@ rest of your machine.
 >   test suites, CI after you push. Review changes before running them on the host.
 > - **Every allowlisted domain is an exfiltration channel.** `api.anthropic.com` is unavoidable.
 >   The `github` preset in particular lets anything with a token push data out.
+> - **What Claude reads is sent to the API.** The box keeps Claude away from the rest of your
+>   machine, not your project's contents away from Anthropic. Masks hide whole files; for personal
+>   data inside files (client names, IBANs, national IDs) use
+>   [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap) - see
+>   [Personal data in the project](#personal-data-in-the-project).
 > - **Conversation history lives in the container's volume**, not in your `~/.claude`. Removing it
 >   (`claude-ide-box rm --volume`) deletes that history.
 > - **A repository Claude creates mid-session is writable until the next start.** Then its `.git`
@@ -281,6 +287,27 @@ Microsoft Office itself cannot run in a Linux container and does not need to. Co
 tracked changes, pivot tables, charts - survive best when Claude edits a `.docx`/`.xlsx` in place
 rather than converting it back and forth. Macros (`.docm`, `.xlsm`) are never run in the box.
 
+### Personal data in the project
+
+The box decides what Claude can *reach*; it does not change what Claude *reads*, and everything it
+reads goes to the API. When a project holds personal data - client documents, CRM or payroll
+exports, CVs, contracts - the recommended setup adds [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap), a companion tool that runs
+on your machine with a local model and no network:
+
+| Step | Command | What it gives you |
+|---|---|---|
+| 1. See what is there | `pii-airgap scan` | which files hold names, IBANs, PESELs, phone numbers..., with confidence; no value is ever printed or cached |
+| 2. Hide whole documents | `pii-airgap mask-add contracts/umowa.docx`, then `claude-ide-box up --recreate` | the file is empty inside the box (the same mask mechanism as `.env`) |
+
+Both steps work with this version of Claude IDE Box. A third step - letting Claude work on a copy in
+which personal data is replaced by tokens such as `[PERSON_1]` and put back afterwards - is
+proposed in [#3](https://github.com/PiotrSitkowski/claude-ide-box/pull/3).
+
+> [!WARNING]
+> No detector finds everything. What pii-airgap misses reaches the API in clear text, so this lowers
+> exposure but is not GDPR, CCPA or HIPAA compliance. Its README publishes measured precision and
+> recall per language.
+
 > [!NOTE]
 > **Not a developer?** Lawyers, HR, marketing and other document-heavy work benefit from the same
 > isolation. [docs/NON-DEVELOPERS.md](docs/NON-DEVELOPERS.md) describes how to use Claude IDE Box
@@ -408,6 +435,18 @@ Set `CLAUDE_IDE_BOX_DEBUG=1` to mirror the wrapper log on stderr.
 
 restores the extension binaries (`guard --undo`) and removes the scripts. It prints the commands to
 remove the config, the Docker containers, volumes and networks, which it leaves in place on purpose.
+
+## Ecosystem
+
+Optional companion tools. They are separate projects with their own images; nothing here is part
+of the Claude IDE Box base image.
+
+| Project | What it adds | Commands |
+|---|---|---|
+| [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap) | air-gapped PII detector and reversible pseudonymiser: reports which files hold personal data and adds them to Claude IDE Box masks | `pii-airgap scan`, `pii-airgap mask-add FILE` |
+
+Recommended for any project that holds personal data; see
+[Personal data in the project](#personal-data-in-the-project).
 
 ## Development
 
