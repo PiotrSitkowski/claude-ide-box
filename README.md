@@ -89,10 +89,10 @@ synthetic.
 **GLiNER** (`pii-airgap build --ner gliner`, model `urchade/gliner_multi-v2.1`), measured by CI
 inside the image without network ([eval/results-gliner-urchade-gliner_multi-v2.1.md](eval/results-gliner-urchade-gliner_multi-v2.1.md)):
 
-| | Polish | English | German | ORG recall | PERSON recall | Speed |
+| Backend | Masked % Polish | Masked % English | Masked % German | ORG recall % | PERSON recall % | Time per document |
 |---|---:|---:|---:|---:|---:|---:|
-| spaCy `xx_ent_wiki_sm` (default) - masked characters % | 92.7 | 94.7 | 94.1 | 52.0 | 96.7 | 2.5 ms/doc |
-| GLiNER `gliner_multi-v2.1` - masked characters % | 98.3 | 99.0 | 98.4 | 92.0 | 100.0 | 178 ms/doc |
+| spaCy `xx_ent_wiki_sm` (default) | 92.7 | 94.7 | 94.1 | 52.0 | 96.7 | 2.5 ms |
+| GLiNER `gliner_multi-v2.1` | 98.3 | 99.0 | 98.4 | 92.0 | 100.0 | 178 ms |
 
 GLiNER finds clearly more, mostly organisations, at about 70 times the CPU time and with more false
 dates of birth (13). It is not the default yet only because the licence of its weights has not been
