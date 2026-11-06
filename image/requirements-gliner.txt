@@ -2,5 +2,5 @@
 gliner==0.2.30
 huggingface_hub>=0.21.4,<1.0
 # the mDeBERTa-v3 tokenizer needs both
-protobuf>=4,<7
+protobuf>=7
 sentencepiece>=0.2,<0.3
