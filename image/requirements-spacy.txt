@@ -1,0 +1,4 @@
+# NER=spacy: spaCy and a multilingual WikiNER pipeline (installed separately
+# from GitHub releases with a pinned SHA-256, see the Dockerfile).
+spacy==3.8.7
+click==8.5.0

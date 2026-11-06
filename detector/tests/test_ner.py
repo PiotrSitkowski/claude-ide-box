@@ -70,7 +70,15 @@ class NerTests(unittest.TestCase):
         self.assertEqual([f.type for f in d.detect("Hans Müller, PESEL 44051401359")], ["PERSON", "PESEL"])
 
     def test_load_backend(self):
+        import os
         self.assertIsNone(load_backend("none"))
+        os.environ["PII_AIRGAP_MODEL_DIR"] = "/nonexistent/model-dir"
+        try:
+            with self.assertRaises(RuntimeError) as cm:
+                load_backend("gliner")
+            self.assertIn("/nonexistent/model-dir", str(cm.exception))
+        finally:
+            del os.environ["PII_AIRGAP_MODEL_DIR"]
         with self.assertRaises(ValueError):
             load_backend("magic:x")
 

@@ -94,6 +94,9 @@ def load_backend(spec, threshold=None):
     if not spec or spec == "none":
         return None
     kind, _, arg = spec.partition(":")
+    if not arg:
+        arg = {"gliner": os.environ.get("PII_AIRGAP_MODEL_DIR", "/opt/pii-airgap/model"),
+               "spacy": os.environ.get("PII_AIRGAP_SPACY_MODEL", "xx_ent_wiki_sm")}.get(kind, "")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     if kind == "gliner":

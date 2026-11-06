@@ -476,7 +476,14 @@ cmd_build() {
   find_engine
   root="$(script_root)"
   [ -f "$root/image/Dockerfile" ] || die "image/Dockerfile not found next to $0"
-  "$ENGINE" build -f "$root/image/Dockerfile" --build-arg "NER=$ner" -t "$PA_IMAGE" "$root"
+  local extra=()
+  if [ -n "${PII_AIRGAP_BUILD_CA:-}" ]; then
+    [ -f "$PII_AIRGAP_BUILD_CA" ] || die "PII_AIRGAP_BUILD_CA=$PII_AIRGAP_BUILD_CA is not a file"
+    extra=(--secret "id=build_ca,src=$PII_AIRGAP_BUILD_CA")
+  fi
+  "$ENGINE" build -f "$root/image/Dockerfile" --build-arg "NER=$ner" \
+    --build-arg "GLINER_REVISION=${PII_AIRGAP_GLINER_REVISION:-main}" \
+    ${extra[@]+"${extra[@]}"} -t "$PA_IMAGE" "$root"
 }
 
 main() {
