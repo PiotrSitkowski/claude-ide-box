@@ -53,18 +53,22 @@ RUN --mount=type=secret,id=build_ca,required=false \
  && rm -rf /root/.cache
 
 COPY detector/pii_airgap /opt/pii-airgap/pii_airgap
+# The container runs with the caller's UID, which has no /etc/passwd entry;
+# USER and LOGNAME keep getpass.getuser() (used by torch) from failing.
 ENV PYTHONPATH=/opt/pii-airgap PII_AIRGAP_NER=${NER} HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
-    PYTHONDONTWRITEBYTECODE=1 PII_AIRGAP_OCR_LANGS=pol+eng+deu
+    PYTHONDONTWRITEBYTECODE=1 PII_AIRGAP_OCR_LANGS=pol+eng+deu USER=pii-airgap LOGNAME=pii-airgap
+RUN chmod -R a+rX /opt/pii-airgap /opt/venv
 
 # Self-test without network: the model must load from the image and find a
 # name; the checksum rules must find a PESEL. A broken model fails the build.
+# It runs as a UID without a passwd entry, as the container does.
+USER 54321:54321
 RUN mkdir -p /tmp/selftest \
  && printf 'Umowa z Janem Kowalskim, PESEL 44051401359, Warszawa.\n' >/tmp/selftest/a.txt \
  && python3 -P -m pii_airgap scan /tmp/selftest --no-cache --json >/tmp/selftest.json \
  && python3 -c 'import json, os, sys; r = json.load(open("/tmp/selftest.json")); c = r["files"][0]["counts"]; \
 assert "PESEL" in c, c; assert os.environ["PII_AIRGAP_NER"] == "none" or "PERSON" in c, c; print("self-test", c)' \
- && rm -rf /tmp/selftest /tmp/selftest.json \
- && chmod -R a+rX /opt/pii-airgap /opt/venv
+ && rm -rf /tmp/selftest /tmp/selftest.json
 
 WORKDIR /opt/pii-airgap
 USER 65534:65534
