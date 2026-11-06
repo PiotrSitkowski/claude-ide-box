@@ -40,7 +40,9 @@ do one of these:
 - What the host does with project files afterwards. Claude can edit the project by design; running
   its `Makefile`, `composer` or `npm` scripts, `.envrc` or a test suite on the host is outside the
   sandbox (see the threat model in the README).
-- Data sent to an allowlisted domain. Allowlisted domains are deliberate exits.
+- Data sent to an allowlisted domain. Allowlisted domains are deliberate exits; that includes the
+  project content Claude reads, which goes to the Anthropic API. To reduce the personal data in it,
+  see [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap).
 - Container escapes through kernel or container runtime bugs - report those upstream (Docker,
   runc, containerd, the kernel). A Claude IDE Box configuration that makes such a bug reachable when it
   otherwise would not be *is* in scope.
