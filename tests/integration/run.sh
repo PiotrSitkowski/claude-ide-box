@@ -400,6 +400,82 @@ fi
 rm -rf "$evil"
 (cd "$PROJECT" && "$CLI" up >/dev/null 2>&1) || not_ok "container comes back after removing the bad name"
 
+echo "== dependency volumes and secrets outside git"
+PROJECT_C="$WORK/deps project"
+mkdir -p "$PROJECT_C/node_modules/@esbuild/darwin-x64" "$PROJECT_C/config"
+printf 'host\n' >"$PROJECT_C/node_modules/host-marker"
+printf '{ "name": "it-deps", "version": "1.0.0", "dependencies": { "is-number": "7.0.0" } }\n' >"$PROJECT_C/package.json"
+cat >"$PROJECT_C/package-lock.json" <<'EOF'
+{
+  "name": "it-deps",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": { "name": "it-deps", "version": "1.0.0", "dependencies": { "is-number": "7.0.0" } },
+    "node_modules/is-number": {
+      "version": "7.0.0",
+      "resolved": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+      "integrity": "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==",
+      "license": "MIT",
+      "engines": { "node": ">=0.12.0" }
+    }
+  }
+}
+EOF
+IT_SECRET="ItSecretValue1234567"
+printf '{ "mcpServers": { "s": { "type": "sse", "url": "https://mcp.example.com/sse?api_key=%s" } } }\n' "$IT_SECRET" >"$PROJECT_C/.mcp.json"
+printf 'deploy:\n  webhook: https://hooks.example.com/x?token=%s\n' "$IT_SECRET" >"$PROJECT_C/config/deploy.yaml"
+printf '//registry.npmjs.org/:_authToken=%s\n' "$IT_SECRET" >"$PROJECT_C/.npmrc"
+err="$( (cd "$PROJECT_C" && "$CLI" up) 2>&1 >/dev/null)" || not_ok "up in a project with foreign binaries and secrets" "$err"
+NAME_C="$(container_name "$PROJECT_C")"
+case "$err" in
+  *"node_modules/@esbuild/darwin-x64"*"claude-ide-box deps on"*) ok "first start reports binaries built for another platform" ;;
+  *) not_ok "first start reports binaries built for another platform" "$err" ;;
+esac
+case "$err" in
+  *"possible secret in config/deploy.yaml (line 2"*"claude-ide-box mask config/deploy.yaml"*) ok "first start reports a secret in a URL query string, with the mask command" ;;
+  *) not_ok "first start reports a secret in a URL query string" "$err" ;;
+esac
+case "$err$(cat "$XDG_STATE_HOME/claude-ide-box/wrapper.log")" in
+  *"$IT_SECRET"*) not_ok "the secret value is printed nowhere" ;;
+  *) ok "the secret value is printed nowhere" ;;
+esac
+v="$(docker exec "$NAME_C" cat "$PROJECT_C/.mcp.json" 2>&1)"
+[ -z "$v" ] && ok ".mcp.json with a key in its URL is empty in the container" || not_ok ".mcp.json with a key in its URL is empty in the container" "$v"
+v="$(docker exec "$NAME_C" cat "$PROJECT_C/.npmrc" 2>&1)"
+[ -z "$v" ] && ok ".npmrc is empty in the container" || not_ok ".npmrc is empty in the container" "$v"
+(cd "$PROJECT_C" && "$CLI" deps on node_modules) >/dev/null 2>&1 || not_ok "deps on"
+if (cd "$PROJECT_C" && "$CLI" deps install) >"$WORK/deps.log" 2>&1; then
+  ok "deps install runs npm ci in the container through the proxy"
+else
+  not_ok "deps install runs npm ci in the container through the proxy" "$(tail -n 20 "$WORK/deps.log")"
+fi
+docker exec "$NAME_C" test -f "$PROJECT_C/node_modules/is-number/index.js" &&
+  ok "the container's node_modules holds the installed package" || not_ok "the container's node_modules holds the installed package"
+v="$(docker exec "$NAME_C" stat -c %u "$PROJECT_C/node_modules" "$PROJECT_C/node_modules/is-number" 2>&1 | sort -u)"
+[ "$v" = "$expected_uid" ] && ok "the dependency volume belongs to the container user" || not_ok "the dependency volume belongs to the container user" "$v"
+docker exec "$NAME_C" test -e "$PROJECT_C/node_modules/@esbuild/darwin-x64" &&
+  not_ok "the host's foreign binaries are hidden in the container" || ok "the host's foreign binaries are hidden in the container"
+if [ -f "$PROJECT_C/node_modules/host-marker" ] && [ -d "$PROJECT_C/node_modules/@esbuild/darwin-x64" ] &&
+  [ ! -e "$PROJECT_C/node_modules/is-number" ]; then
+  ok "the host's node_modules is untouched"
+else
+  not_ok "the host's node_modules is untouched" "$(ls -la "$PROJECT_C/node_modules")"
+fi
+in_box_c() { docker exec -w "$PROJECT_C" "$NAME_C" bash -c "$1"; }
+in_box_c "echo planted > node_modules/planted.js" && [ ! -e "$PROJECT_C/node_modules/planted.js" ] &&
+  ok "what the container writes to node_modules does not reach the host" ||
+  not_ok "what the container writes to node_modules does not reach the host"
+err="$( (cd "$PROJECT_C" && "$WRAPPER" --version) 2>&1 >/dev/null)"
+case "$err" in
+  *darwin-x64*) not_ok "with the volume the foreign binaries are not reported again" "$err" ;;
+  *) ok "with the volume the foreign binaries are not reported again" ;;
+esac
+(cd "$PROJECT_C" && "$CLI" rm --volume) >/dev/null 2>&1
+[ -z "$(docker volume ls -q --filter "label=io.claude-ide-box.deps-of=$NAME_C")" ] &&
+  ok "rm --volume removes the dependency volumes" || not_ok "rm --volume removes the dependency volumes"
+
 echo "== extra: fail closed"
 out="$(cd "$PROJECT" && DOCKER_HOST=unix:///nonexistent.sock "$WRAPPER" --version 2>/dev/null)" && st=0 || st=$?
 if [ "$st" != 0 ] && [ -z "$out" ]; then
