@@ -14,6 +14,7 @@ import re
 import stat
 from collections import Counter
 
+from .code import syntax_for
 from .detect import sniff_delimiter
 
 STRICT = re.compile(r"\[([A-Z]+)_([0-9]+)\]")
@@ -98,13 +99,14 @@ def _line_of(text, pos):
     return text.count("\n", 0, pos) + 1
 
 
-def anonymise_text(text, detector, tmap, where="input", table=None):
+def anonymise_text(text, detector, tmap, where="input", table=None, code=None):
     m = STRICT.search(text)
     if m:
         raise TokenCollision("%s line %d already contains token-shaped text %s"
                              % (where, _line_of(text, m.start()), m.group(0)))
     pieces, last = [], 0
-    for f in sorted(detector.detect(text, table=table), key=lambda f: f.start):
+    found = detector.detect(text, table=table, code=code) if code else detector.detect(text, table=table)
+    for f in sorted(found, key=lambda f: f.start):
         pieces.append(text[last:f.start])
         pieces.append(tmap.token_for(f.type, f.text))
         last = f.end
@@ -262,7 +264,8 @@ def anonymise_tree(root, map_path, detector, git="refuse", documents_with_pii=()
         if rel.lower().endswith((".csv", ".tsv")):
             table = "\t" if rel.lower().endswith(".tsv") else sniff_delimiter(text)
         try:
-            new = anonymise_text(text, detector, tmap, where=rel, table=table)
+            code = None if table else syntax_for(os.path.splitext(rel.lower())[1])
+            new = anonymise_text(text, detector, tmap, where=rel, table=table, code=code)
         except TokenCollision as e:
             collisions.append(str(e))
             continue

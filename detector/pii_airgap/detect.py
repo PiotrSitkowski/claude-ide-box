@@ -10,7 +10,9 @@ import re
 
 from . import validators as v
 
-VERSION = "2"
+from .code import Projection, resolve as resolve_syntax  # noqa: E402
+
+VERSION = "3"
 
 # Words that must appear shortly before a weak match (lowercase regexes).
 _CTX = {
@@ -352,7 +354,7 @@ class Detector(object):
     def _validate(self, rule, s):
         return rule.validator is None or rule.validator(s)
 
-    def _candidates(self, text, table=None):
+    def _candidates(self, text, table=None, code=None):
         for rule in self.rules:
             for m in rule.regex.finditer(text):
                 start, end = m.start(), m.end()
@@ -376,18 +378,33 @@ class Detector(object):
         for t, term, rx in self.lists:
             for m in rx.finditer(text):
                 yield Finding(m.start(), m.end(), t, "list", 1.0, "list")
-        tables = table if table is not None else ("|" if "|" in text else None)
-        headers = table_headers(text, tables) if tables else []
+        if code:
+            tables, headers = None, []
+        else:
+            tables = table if table is not None else ("|" if "|" in text else None)
+            headers = table_headers(text, tables) if tables else []
         if self.ner is not None:
-            for f in self._model_findings(text, headers):
-                if f.type == "PERSON":
-                    f = _widen_person(text, f)
-                elif f.type == "LOCATION" and self._only_capitalised(text, f):
-                    continue
-                yield f
+            if code:
+                # Only the strings and comments of source code are free text.
+                proj = Projection(text, resolve_syntax(code))
+                for f in self._ner_findings(proj.text, []):
+                    span = proj.to_original(f.start, f.end)
+                    if span:
+                        yield Finding(span[0], span[1], f.type, f.kind, f.confidence, f.source)
+            else:
+                for f in self._ner_findings(text, headers):
+                    yield f
         if tables:
             for f in table_findings(text, tables):
                 yield f
+
+    def _ner_findings(self, text, headers):
+        for f in self._model_findings(text, headers):
+            if f.type == "PERSON":
+                f = _widen_person(text, f)
+            elif f.type == "LOCATION" and self._only_capitalised(text, f):
+                continue
+            yield f
 
     def _model_findings(self, text, headers):
         """The model's findings, cut at line breaks (a name or place does not
@@ -418,10 +435,12 @@ class Detector(object):
         lowered = word[0].lower() + text[f.start + 1:stop]
         return not any(g.type == "LOCATION" and g.start < len(word) for g in self.ner(lowered))
 
-    def detect(self, text, table=None):
+    def detect(self, text, table=None, code=None):
         """Findings in TEXT. TABLE is the delimiter when the whole text is a
-        delimited table (CSV, TSV); Markdown tables are found in any text."""
-        cands = sorted(self._candidates(text, table),
+        delimited table (CSV, TSV); Markdown tables are found in any text.
+        CODE names the syntax of source code (pii_airgap.code), whose
+        strings and comments are the only text the model reads."""
+        cands = sorted(self._candidates(text, table, code),
                        key=lambda f: (-_RANK.get(f.source, 0), -f.confidence, -(f.end - f.start), f.start))
         taken = []
         for f in cands:

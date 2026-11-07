@@ -78,7 +78,7 @@ Three layers, no single technique:
 | Tables | every cell of a column whose header names a person (`name`, `Imię i nazwisko`, `Nachname`...), a place or an address - CSV, TSV, XLSX and Markdown tables | high | the whole column |
 | Legal forms | a run of capitalised words before `Sp. z o.o.`, `S.A.`, `GmbH`, `KG`, `Ltd`, `LLP`, `Inc.`... is one organisation | high | companies with a legal form |
 | Your lists | client names, project code names - `~/.config/pii-airgap/lists/*.txt`, one `term` or `TYPE: term` per line | exact | exactly what you list |
-| NER model | names, organisations, places | see below | see below |
+| NER model | names, organisations, places; in source code (by extension) only in string literals and comments, never in identifiers | see below | see below |
 
 Weak checksums (NIP, REGON, BSN, ID card and passport numbers, Steuer-ID) only count when a context
 word is nearby ("NIP", "REGON", "BSN", "dowód"...), because about one random number in ten passes

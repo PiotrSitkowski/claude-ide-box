@@ -11,6 +11,7 @@ import os
 import stat
 from collections import Counter
 
+from .code import syntax_for
 from .detect import sniff_delimiter
 from .extract import DEFAULT_MAX_BYTES, ExtractionError, extract_text
 
@@ -64,7 +65,8 @@ def scan_file(path, detector, max_bytes=DEFAULT_MAX_BYTES):
         table = "\t"
     elif low.endswith(".csv"):
         table = sniff_delimiter(ex.text)
-    for f in detector.detect(ex.text, table=table):
+    code = None if table else syntax_for(os.path.splitext(low)[1])
+    for f in (detector.detect(ex.text, table=table, code=code) if code else detector.detect(ex.text, table=table)):
         findings.append({
             "type": f.type, "kind": f.kind, "source": f.source,
             "confidence": round(f.confidence, 3),
