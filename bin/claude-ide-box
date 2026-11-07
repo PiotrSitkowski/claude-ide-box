@@ -288,6 +288,7 @@ cmd_setup() {
   cb_load_config
   cb_find_docker
   cb_require_docker
+  cb_engine_enforce setup
   combos="$combos $CFG_BUILD_PROFILES $(printf '%s' "$CFG_PROFILE" | tr ' ' ',')"
   for c in $combos; do
     cb_require_profiles "$c"
@@ -388,6 +389,7 @@ cmd_login() {
   cb_load_config
   cb_find_docker
   cb_require_docker
+  cb_engine_enforce
   cb_docker image inspect "$(cb_image_for_profile base)" >/dev/null 2>&1 || cb_die "run 'claude-ide-box setup' first"
   cb_container_uid
   say "Starting 'claude setup-token' in a temporary container behind the proxy."
@@ -685,11 +687,41 @@ cmd_presets() {
 
 DOCTOR_FAILED=0
 
+# Red only on a terminal, and not with NO_COLOR.
+cb_red() {
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    printf '\033[31m%s\033[0m\n' "$*"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
 check_ok() { printf '[ ok ] %s\n' "$*"; }
 check_warn() { printf '[warn] %s\n' "$*"; }
 check_fail() {
-  printf '[FAIL] %s\n' "$*"
+  cb_red "[FAIL] $*"
   DOCTOR_FAILED=1
+}
+
+# The container engine against the minimum versions (engine-versions.txt).
+doctor_engine() {
+  local findings level msg any=0
+  findings="$(cb_engine_findings)"
+  while IFS="$CB_TAB" read -r level msg; do
+    [ -n "$level" ] || continue
+    any=1
+    case "$level" in
+      fail) check_fail "$msg" ;;
+      *) check_warn "$msg" ;;
+    esac
+  done <<EOF
+$findings
+EOF
+  if [ "$any" = 0 ]; then
+    # cb_engine_findings ran in a subshell; read the facts here for the summary.
+    cb_engine_version_facts
+    check_ok "$(cb_engine_summary): no known container escape ($(cb_engine_versions_file))"
+  fi
 }
 
 # User settings.json files of every IDE we know, per OS (PLATFORM-NOTES).
@@ -785,6 +817,9 @@ EOF
 cmd_doctor() {
   local image info b state n=0 bad="" host_claude
   cb_load_config
+  if [ "$CFG_ALLOW_VULNERABLE_DOCKER" = 1 ]; then
+    cb_red "[RISK] ALLOW_VULNERABLE_DOCKER=1 in $CB_CONFIG_FILE: claude-ide-box runs even on a container engine with a known container escape"
+  fi
   # cb_find_docker exits when docker is missing; probe it in a subshell first.
   if ! (cb_find_docker) >/dev/null 2>&1; then
     check_fail "docker CLI not found"
@@ -795,6 +830,7 @@ cmd_doctor() {
       check_fail "Docker daemon is not reachable (is Docker Desktop running? context: ${DOCKER_CONTEXT:-$(cb_docker context show 2>/dev/null || echo default)})"
     else
       check_ok "Docker daemon $(cb_docker version --format '{{.Server.Version}}' 2>/dev/null)"
+      doctor_engine
       for image in "$(cb_image_for_profile base)" "$CB_PROXY_IMAGE"; do
         if cb_docker image inspect --format '{{.Id}}' "$image" >/dev/null 2>&1; then
           check_ok "image $image"

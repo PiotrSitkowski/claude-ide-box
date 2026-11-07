@@ -400,6 +400,15 @@ fi
 rm -rf "$evil"
 (cd "$PROJECT" && "$CLI" up >/dev/null 2>&1) || not_ok "container comes back after removing the bad name"
 
+echo "== minimum engine versions"
+out="$("$CLI" doctor 2>&1 || true)"
+v="$(printf '%s\n' "$out" | grep -E 'container escape|engine version|runc version' || true)"
+printf '      %s\n' "$v"
+case "$v" in
+  *"[ ok ]"*"no known container escape"*) ok "doctor reads the real engine's versions (Engine, runc) and checks them" ;;
+  *) not_ok "doctor reads the real engine's versions (Engine, runc) and checks them" "$v" ;;
+esac
+
 echo "== extra: fail closed"
 out="$(cd "$PROJECT" && DOCKER_HOST=unix:///nonexistent.sock "$WRAPPER" --version 2>/dev/null)" && st=0 || st=$?
 if [ "$st" != 0 ] && [ -z "$out" ]; then

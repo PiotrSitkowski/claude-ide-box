@@ -93,3 +93,24 @@ directory (`~/.vscode-server/...`).
 The extension inherits the IDE's environment, which on macOS is the GUI launch environment, not the
 login shell. `PATH` may lack `/usr/local/bin` or `/opt/homebrew/bin`; the wrapper must locate
 `docker` robustly (check common locations) and log what it used.
+
+## Reading the engine's versions
+
+One call gives everything the minimum-version check needs:
+
+```bash
+docker version --format '{{.Server.Version}}|{{.Server.Platform.Name}}|{{range .Server.Components}}{{.Name}}={{.Version}};{{end}}'
+```
+
+| Engine | Seen |
+|---|---|
+| Docker Engine 29.9.2 on Linux (development sandbox) | `29.9.2|Docker Engine - Community|Engine=29.9.2;containerd=v2.4.2;runc=1.5.2;docker-init=0.19.0;` |
+| Docker Desktop | `Platform.Name` is `Docker Desktop <version> (<build>)`, e.g. `Docker Desktop 4.98.0 (...)` |
+| Rancher Desktop | the engine version carries a suffix, e.g. `29.9.2-rd` |
+| Podman | the components list `Podman Engine`; there is no runc component when crun is the runtime |
+
+Versions are compared numerically per component after taking the first dotted number from each
+string, so suffixes (`-rd`, `+azure`, `-0ubuntu2`, `v` prefixes, `(build)`) do not matter. An
+empty or non-numeric version (`unknown`, `dev`, a missing runc component) is treated as vulnerable.
+The Docker Desktop row was not re-measured for this check; it follows the format documented for
+`docker version` on Docker Desktop and has to be confirmed on a Mac.
