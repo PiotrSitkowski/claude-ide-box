@@ -70,7 +70,54 @@ case "$cmd" in
       echo "2026/11/05 17:07:13| Accepting HTTP Socket connections at conn33 local=0.0.0.0:3128" >&2
     fi
     ;;
-  stop | volume | ps | pull | kill)
+  volume)
+    need_daemon
+    # Volumes are files in $dir/volumes; their content is the label list.
+    mkdir -p "$dir/volumes"
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      inspect)
+        for a in "$@"; do last="$a"; done
+        [ -f "$dir/volumes/${last:-}" ] || { echo "Error: No such volume: ${last:-}" >&2; exit 1; }
+        echo "[]"
+        ;;
+      create)
+        labels=""
+        while [ $# -gt 1 ]; do
+          case "$1" in
+            --label) labels="$labels $2"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        printf '%s\n' "$labels" >"$dir/volumes/$1"
+        echo "$1"
+        ;;
+      ls)
+        filter=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --filter) filter="${2#label=}"; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        for v in "$dir"/volumes/*; do
+          [ -f "$v" ] || continue
+          case " $(cat "$v") " in
+            *" $filter "*) basename "$v" ;;
+          esac
+        done
+        ;;
+      rm)
+        for a in "$@"; do
+          case "$a" in -*) ;; *) rm -f "$dir/volumes/$a" ;; esac
+        done
+        echo "${FAKE_PS_OUTPUT:-ok}"
+        ;;
+      *) echo "${FAKE_PS_OUTPUT:-ok}" ;;
+    esac
+    ;;
+  stop | ps | pull | kill)
     need_daemon
     echo "${FAKE_PS_OUTPUT:-ok}"
     ;;
@@ -124,7 +171,10 @@ case "$cmd" in
         exit "${FAKE_LOGIN_STATUS:-0}"
         ;;
       *" --rm "*)
-        # setup's home-ownership check of a freshly built profile image
+        # One-off containers: setup's home-ownership check of a freshly built
+        # profile image, or the ownership fix of a new dependency volume.
+        printf '%s ' "$@" >>"$dir/run-rm.log"
+        printf '\n' >>"$dir/run-rm.log"
         printf '%s' "${FAKE_HOME_FOREIGN:-}"
         exit 0
         ;;
@@ -194,9 +244,13 @@ case "$cmd" in
     fi
     printf '%s\n' "$name" >"$dir/exec.name"
     printf '%s\n' "$@" >"$dir/exec.args"
+    printf '%s :: %s\n' "$(cat "$dir/exec.workdir" 2>/dev/null)" "$*" >>"$dir/exec.log"
     : >"$dir/exec.env"
     for n in $envnames; do
-      printf '%s=%s\n' "$n" "${!n-<unset>}" >>"$dir/exec.env"
+      case "$n" in
+        *=*) printf '%s\n' "$n" >>"$dir/exec.env" ;;
+        *) printf '%s=%s\n' "$n" "${!n-<unset>}" >>"$dir/exec.env" ;;
+      esac
     done
     if [ ! -t 0 ]; then
       cat >"$dir/exec.stdin"

@@ -300,11 +300,12 @@ CB_CONFIG_KEYS="SUBNET PROXY_IP UPSTREAM_PROXY PROXY_PRESETS PROFILE BUILD_PROFI
 CLAUDE_CODE_VERSION BASE_IMAGE PROXY_BASE_IMAGE BUILD_NETWORK MEMORY CPUS PIDS_LIMIT
 TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS READONLY_DEFAULTS READONLY GIT_WRITABLE
 NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS AUTO_GUARD CONTAINER_UID CONTAINER_GID
-EXTENSION_DIRS OCR_LANGUAGES ALLOW_VULNERABLE_DOCKER"
+EXTENSION_DIRS OCR_LANGUAGES ALLOW_VULNERABLE_DOCKER DEPS_VOLUMES MASK_IF_SECRET SECRET_SCAN"
 
 # Keys a per-project file may override. Network and build settings are global.
 CB_PROJECT_KEYS="PROFILE MEMORY CPUS PIDS_LIMIT TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS
-READONLY_DEFAULTS READONLY GIT_WRITABLE NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS"
+READONLY_DEFAULTS READONLY GIT_WRITABLE NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS
+DEPS_VOLUMES MASK_IF_SECRET SECRET_SCAN"
 
 cb_config_defaults() {
   CFG_SUBNET="172.30.99.0/24"
@@ -323,7 +324,15 @@ cb_config_defaults() {
   CFG_OCR_LANGUAGES="eng"
   CFG_PIDS_LIMIT="512"
   CFG_TMP_SIZE="1g"
-  CFG_MASK_DEFAULTS=".env .env.*"
+  # Files that hold credentials by convention: dotenv files, Cloudflare
+  # Workers' .dev.vars, npm/curl/direnv configuration, keys and certificates,
+  # cloud service account files.
+  CFG_MASK_DEFAULTS=".env .env.* .dev.vars .dev.vars.* .npmrc .netrc .envrc *.pem *.key credentials*.json service-account*.json"
+  # Masked only while they hold a secret (see secrets.sh): .mcp.json is
+  # needed in the container for MCP servers that carry no credentials.
+  CFG_MASK_IF_SECRET=".mcp.json"
+  CFG_SECRET_SCAN="1"
+  CFG_DEPS_VOLUMES=""
   CFG_MASK=""
   CFG_MASK_PRESETS=""
   CFG_READONLY_DEFAULTS=".git .vscode .agent .agents .idea .devcontainer"
@@ -414,8 +423,8 @@ cb_validate_config() {
   case "$CFG_CONTAINER_UID$CFG_CONTAINER_GID" in
     *[!0-9]*) cb_die "CONTAINER_UID and CONTAINER_GID must be numeric" ;;
   esac
-  case "$CFG_GIT_WRITABLE$CFG_NONESSENTIAL_TRAFFIC$CFG_CLAUDEAI_CONNECTORS$CFG_AUTO_GUARD" in
-    *[!01]*) cb_die "GIT_WRITABLE, NONESSENTIAL_TRAFFIC, CLAUDEAI_CONNECTORS and AUTO_GUARD must be 0 or 1" ;;
+  case "$CFG_GIT_WRITABLE$CFG_NONESSENTIAL_TRAFFIC$CFG_CLAUDEAI_CONNECTORS$CFG_AUTO_GUARD$CFG_SECRET_SCAN" in
+    *[!01]*) cb_die "GIT_WRITABLE, NONESSENTIAL_TRAFFIC, CLAUDEAI_CONNECTORS, AUTO_GUARD and SECRET_SCAN must be 0 or 1" ;;
   esac
   case "$CFG_ALLOW_VULNERABLE_DOCKER" in
     0 | 1) ;;
@@ -861,43 +870,24 @@ cb_emit_mount() {
 }
 
 # Print mount specs, one per line: "KIND<TAB>PATH" where KIND is
-# file (mask with empty file), dir (mask with tmpfs), ro (read-only bind) or
-# bad (a path that cannot be mounted safely).
-# Creates missing read-only directories on the host.
+# deps (dependency volume), file (mask with empty file), dir (mask with
+# tmpfs), ro (read-only bind) or bad (a path that cannot be mounted safely).
+# Creates missing read-only and dependency directories on the host.
 cb_compute_mounts() {
-  local dir="$1" f target e path with_git=""
-  # Nested repositories: git and the IDE on the host run hooks and config such
-  # as core.fsmonitor from them too, so every .git below the root is read-only.
-  [ "$CFG_GIT_WRITABLE" = "1" ] || with_git=1
-  cb_find_masks "$dir" "$with_git" | while IFS= read -r -d '' f; do
-    case "$f" in
-      "$dir/.git") continue ;;
-      */.git)
-        [ -L "$f" ] || cb_emit_mount ro "$f"
-        continue
-        ;;
-    esac
-    target="$f"
-    if [ -L "$f" ]; then
-      target="$(cb_resolve_path "$f" 2>/dev/null)" || continue
-      if ! cb_path_inside "$dir" "$target"; then
-        cb_log "mask: $f is a symlink to $target outside the project; not visible in the container"
-        continue
-      fi
-      [ -e "$target" ] || continue
-      target="$(cb_to_project_path "$dir" "$target")"
-    fi
-    if [ -d "$target" ]; then
-      cb_emit_mount dir "$target"
-    else
-      cb_emit_mount file "$target"
-    fi
-  done | sort -u
+  local dir="$1" e path target deps
+  deps="$(cb_deps_mounts "$dir")" || exit 1
+  CB_DEPS_LIST="$(printf '%s\n' "$deps" | awk -F '\t' '$1 == "deps" { print $2 }')"
+  [ -z "$deps" ] || printf '%s\n' "$deps"
+  cb_compute_mask_mounts "$dir" || exit 1
   for e in $(cb_readonly_entries); do
     case "$e" in
       /* | *..*) cb_die "read-only entry '$e' must be a path relative to the project" ;;
     esac
     path="$dir/$e"
+    # Below a dependency volume the host directory is not visible anyway.
+    if cb_under_deps "$path"; then
+      continue
+    fi
     # A symlinked parent directory would make docker bind a host path
     # outside the project.
     if ! cb_path_inside "$dir" "$(cb_dirname "$path")"; then
@@ -921,6 +911,48 @@ cb_compute_mounts() {
     fi
     cb_emit_mount ro "$path"
   done
+}
+
+# cb_compute_mask_mounts DIR - the mask part of cb_compute_mounts ("file",
+# "dir", nested ".git" as "ro", "bad"). Skips everything inside a dependency
+# volume (CB_DEPS_LIST): the volume hides the host files there, and a mount
+# target inside it would only make Docker create files in the volume.
+cb_compute_mask_mounts() {
+  local dir="$1" f target with_git=""
+  # Nested repositories: git and the IDE on the host run hooks and config such
+  # as core.fsmonitor from them too, so every .git below the root is read-only.
+  [ "$CFG_GIT_WRITABLE" = "1" ] || with_git=1
+  {
+    cb_find_masks "$dir" "$with_git"
+    cb_find_conditional_masks "$dir"
+  } | while IFS= read -r -d '' f; do
+    if cb_under_deps "$f"; then
+      continue
+    fi
+    case "$f" in
+      "$dir/.git") continue ;;
+      */.git)
+        [ -L "$f" ] || cb_emit_mount ro "$f"
+        continue
+        ;;
+    esac
+    target="$f"
+    if [ -L "$f" ]; then
+      target="$(cb_resolve_path "$f" 2>/dev/null)" || continue
+      if ! cb_path_inside "$dir" "$target"; then
+        cb_log "mask: $f is a symlink to $target outside the project; not visible in the container"
+        continue
+      fi
+      [ -e "$target" ] || continue
+      target="$(cb_to_project_path "$dir" "$target")"
+      ! cb_under_deps "$target" || continue
+    fi
+    if [ -d "$target" ]; then
+      cb_emit_mount dir "$target"
+    else
+      cb_emit_mount file "$target"
+    fi
+  done | sort -u
 }
 
 # File listing the paths masked when the container was last created.
@@ -1012,6 +1044,7 @@ cb_build_run_args() {
   local kind path
   cb_container_uid
   CB_MOUNTS="$(cb_compute_mounts "$CB_PROJECT_DIR")" || exit 1
+  CB_DEPS_LIST="$(printf '%s\n' "$CB_MOUNTS" | awk -F '\t' '$1 == "deps" { print $2 }')"
 
   CB_RUN_ARGS=(
     --name "$CB_NAME"
@@ -1055,6 +1088,7 @@ cb_build_run_args() {
     esac
     case "$kind" in
       bad) cb_die "'$path' cannot be mounted safely (its name contains a comma, quote, tab or newline); rename or remove it" ;;
+      deps) CB_RUN_ARGS+=(--mount "type=volume,src=$(cb_deps_volume_name "$path"),dst=$path") ;;
       file) CB_RUN_ARGS+=(--mount "type=bind,src=$CB_EMPTY_FILE,dst=$path,readonly") ;;
       dir) CB_RUN_ARGS+=(--mount "type=tmpfs,dst=$path,tmpfs-size=1048576") ;;
       ro) CB_RUN_ARGS+=(--mount "type=bind,src=$path,dst=$path,readonly") ;;
@@ -1081,7 +1115,7 @@ cb_container_busy() {
 # Make sure the project container exists, runs and matches the current
 # configuration. Must be called with stdout pointing away from the IDE.
 cb_ensure_container() {
-  local image image_id hash state running label
+  local image image_id hash state running label created=0
   # A pseudonymised copy holding real personal data never gets a container.
   cb_pii_check
   cb_require_profiles "$CFG_PROFILE"
@@ -1135,6 +1169,7 @@ cb_ensure_container() {
       prev="$a"
     done
     args+=("$image" sleep infinity)
+    cb_deps_prepare_volumes "$image"
     cb_log "creating container: docker $(cb_quote_args "${args[@]}")"
     local err
     if ! err="$(cb_docker "${args[@]}" 2>&1 >/dev/null)"; then
@@ -1142,8 +1177,20 @@ cb_ensure_container() {
       cb_die "cannot create container $CB_NAME: $err"
     fi
     cb_write_mask_record
+    created=1
   fi
   cb_unlock
+  if [ "$created" = 1 ]; then
+    cb_first_start_checks
+  fi
+}
+
+# Checks that only warn, run when the container is (re)created: they look at
+# the whole project tree, so they are not repeated on every session start.
+cb_first_start_checks() {
+  cb_deps_announce_new
+  cb_warn_foreign_deps
+  cb_warn_secrets
 }
 
 # --------------------------------------------------------------------------
@@ -1190,3 +1237,7 @@ cb_env_passthrough() {
 # Next to this file, also when it is sourced on its own (without CB_LIB).
 # shellcheck source=lib/claude-ide-box/engine.sh
 . "${CB_LIB:-${BASH_SOURCE[0]%/*}}/engine.sh"
+# shellcheck source=lib/claude-ide-box/deps.sh
+. "$CB_LIB/deps.sh"
+# shellcheck source=lib/claude-ide-box/secrets.sh
+. "$CB_LIB/secrets.sh"

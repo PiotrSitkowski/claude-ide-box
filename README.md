@@ -100,7 +100,7 @@ rest of your machine.
 | Inside the container, Claude **cannot** | How |
 |---|---|
 | read `~/.ssh`, `~/.aws`, `~/.gitconfig`, other projects, your home | only the project directory is mounted; home and `docker.sock` never are |
-| read `.env`, `.env.*` (and PrestaShop config with the preset) | bind-mounted over with an empty read-only file / empty tmpfs |
+| read `.env`, `.env.*`, `.dev.vars`, `.npmrc`, `.netrc`, `.envrc`, `*.pem`, `*.key`, `credentials*.json`, `service-account*.json`, an `.mcp.json` that holds a secret (and PrestaShop config with the preset) | bind-mounted over with an empty read-only file / empty tmpfs; other secret-looking values are reported when the container is created ([details](#secrets-in-files-git-does-not-track)) |
 | plant git hooks or IDE tasks | `.git` (at every depth), `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer` are read-only |
 | unmask a secret by renaming or replacing it | masked paths are recorded with their inode; a moved or swapped one stops the next start |
 | smuggle mount options through file names | paths with commas, quotes or control characters stop the start instead of reaching `docker --mount` |
@@ -362,6 +362,8 @@ creates its container (a few seconds); later sessions reuse it.
 | `claude-ide-box forward 5173` | open a dev server from the container at `http://127.0.0.1:5173` |
 | `claude-ide-box profile python` | tools for this project (see [What runs in the box](#what-runs-in-the-box)) |
 | `claude-ide-box logs` | wrapper log and requests the proxy denied (`--all` for the full proxy log) |
+| `claude-ide-box deps on` / `deps install` | give the container its own `node_modules`, `.venv` ([details](#native-dependencies-node_modules-venv)) |
+| `claude-ide-box scan` / `mask PATH` | look for secrets the container could read / mask a file for this project |
 | `claude-ide-box allow example.org` | allow a domain (`.example.org` for subdomains too) |
 | `claude-ide-box up --recreate` | apply changed masks or settings now |
 | `claude-ide-box down` / `rm` | stop / remove this project's container (`rm --volume` also deletes history) |
@@ -384,6 +386,83 @@ the map in clear text. If it finds any - a restored folder always holds them, a 
 in-place restore or when a value was written into it - or if the map is gone, was replaced or the
 check cannot run, nothing starts and the message names the files (never the values). The project
 container never sees the map.
+
+### Native dependencies (node_modules, .venv)
+
+`node_modules` and `.venv` installed on macOS or Windows hold binaries for that system: esbuild,
+rollup, workerd, sharp, Next's SWC, compiled Python wheels. In the Linux container they fail -
+sometimes loudly (`npm test` crashes), sometimes silently: a Claude Code hook that runs through
+`tsx` exits with an error, Claude Code treats that as non-blocking, and the project's guard rails
+stop working without a message. When a project container is created, and in `doctor`, claude-ide-box
+looks for such packages (`node_modules/@esbuild/darwin-arm64`, `@rollup/rollup-win32-x64-msvc`,
+pnpm's `.pnpm/@esbuild+darwin-x64@...`, a `.venv` whose `pyvenv.cfg` points at a Homebrew Python)
+and says so.
+
+The fix is to give the container its own copy:
+
+```bash
+claude-ide-box deps on
+```
+
+```bash
+claude-ide-box deps install
+```
+
+`deps on` sets `DEPS_VOLUMES="node_modules .venv"` for the project (or the paths you name:
+`claude-ide-box deps on node_modules apps/api/.venv`). Each listed directory gets a named Docker
+volume laid over it in the container; the host's directory stays exactly as it is, and the host
+keeps using it. `deps install` recreates the container and installs from the lockfile inside it,
+as the container user, through the proxy: `npm ci`, `pnpm install --frozen-lockfile`,
+`yarn install --frozen-lockfile` (or `--immutable` with Yarn Berry), `uv sync --frozen`, or a venv
+plus `pip install -r requirements.txt`. Install scripts (`postinstall`) run in the container, not
+on the host.
+
+- A name without `/` (`node_modules`) matches at any depth, so workspace packages
+  (`packages/*/node_modules`) get their own volumes too; a path with `/` is anchored at the project
+  root. Missing root directories are created on the host, empty, so Docker does not create them as
+  root.
+- A dependency directory that is a symlink, or a file, stops the start: a volume is never laid over
+  a symlink.
+- Masks inside a dependency directory are not mounted: the volume hides the host's files there.
+- Isolation gets stronger, not weaker: the container can no longer change the `node_modules` that
+  your host tools execute.
+- Volumes are per project and survive `claude-ide-box rm`; `rm --volume` deletes them with the
+  rest of the project's data. `claude-ide-box deps` shows them.
+- A directory that a package manager creates later in a new workspace package (one that did not
+  exist on the host when the container was created) is written to the host until the next start.
+
+On Docker Desktop for macOS this is also the main way to speed up installs and test runs: a named
+volume lives in Docker's VM, a bind mount crosses the file sharing layer on every file access.
+See [TESTING.md](TESTING.md#dependency-volumes-measured) for what was measured and what was not.
+
+### Secrets in files git does not track
+
+A real project keeps credentials in files git ignores: `.dev.vars` for Wrangler, an `.npmrc` with a
+registry token, `.mcp.json` with an API key in a server URL. The default masks
+(`MASK_DEFAULTS`) cover `.env`, `.env.*`, `.dev.vars`, `.dev.vars.*`, `.npmrc`, `.netrc`, `.envrc`,
+`*.pem`, `*.key`, `credentials*.json` and `service-account*.json` at any depth: the container sees
+an empty read-only file.
+
+`.mcp.json` is masked **only while it holds a secret** (`MASK_IF_SECRET`): a URL with a key in its
+query string or user part, an `Authorization`/`Bearer` header, a literal value in an `env` block,
+or anything that looks like a token. Masking it always would also hide MCP servers that need no
+credentials (`npx @playwright/mcp`), which work in the box; a file that uses `${VAR}` placeholders
+stays visible. The check is a heuristic, so it errs towards masking: a long literal of letters and
+digits is enough.
+
+When a container is created, a quick offline scan reads config-like files the container can see
+(`*.json`, `*.yaml`, `*.toml`, `*.ini`, `.npmrc`, ... up to 1 MB, not dependencies, not lockfiles,
+not masked files) and every small file for private keys. It warns with the file, the line and the
+kind of finding, never the value, and the command to mask it:
+
+```text
+claude-ide-box: warning: possible secret in deploy/hooks.yaml (line 2: secret-looking URL query parameter) - Claude in the container can read it; mask it: claude-ide-box mask deploy/hooks.yaml
+```
+
+`claude-ide-box scan` runs the same scan on demand, `claude-ide-box mask PATH` adds a per-project
+mask (`--remove` undoes it), `SECRET_SCAN=0` turns the scan off. A default mask you do not want in
+one project goes away by setting `MASK_DEFAULTS` in that project's config, e.g. without `.npmrc`
+when its registry settings are needed for `deps install`.
 
 ## What runs in the box
 
@@ -558,7 +637,11 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `SUBNET` / `PROXY_IP` | `172.30.99.0/24` / `172.30.99.2` | change if it collides with your LAN or VPN |
 | `CLAUDE_CODE_VERSION` | `2.1.318` | pinned Claude Code version |
 | `PROFILE` * | `base` | image profiles, e.g. `python java` (or use `claude-ide-box profile`) |
-| `MASK` * | | extra mask patterns; a name (`secrets.json`) matches at any depth, a path (`config/db.yml`) is anchored at the project root |
+| `MASK_DEFAULTS` * | `.env .env.* .dev.vars .dev.vars.* .npmrc .netrc .envrc *.pem *.key credentials*.json service-account*.json` | masked by default |
+| `MASK` * | | extra mask patterns; a name (`secrets.json`) matches at any depth, a path (`config/db.yml`) is anchored at the project root (or use `claude-ide-box mask`) |
+| `MASK_IF_SECRET` * | `.mcp.json` | masked only while the scan finds a secret in them |
+| `SECRET_SCAN` * | `1` | `0` turns off the secret scan at container creation and in `doctor` |
+| `DEPS_VOLUMES` * | | directories that get a container-only volume, e.g. `node_modules .venv` (or use `claude-ide-box deps on`) |
 | `MASK_PRESETS` * | | `prestashop` |
 | `READONLY` * | | extra read-only paths, e.g. `.husky .envrc` |
 | `GIT_WRITABLE` * | `0` | `1` lets Claude commit (it can then also write `.git/hooks`) |
