@@ -34,6 +34,7 @@ do one of these:
 | reach the network beyond the allowlist | other domains, other ports, bare IPs, DNS, host or LAN services |
 | change the sandbox configuration | anything under `~/.config/claude-ide-box`, the proxy allowlist |
 | make the wrapper run `claude` on the host | any fail-open path |
+| start in a folder holding restored personal data | a container starting in, above or below a copy or restored folder recorded by pii-airgap whose check reports values of its token map, whose map is missing or replaced, or whose check fails; the map reaching the project container |
 
 ## Out of scope
 
