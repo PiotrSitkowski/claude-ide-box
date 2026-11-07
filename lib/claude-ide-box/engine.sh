@@ -45,7 +45,7 @@ cb_component_title() {
 # Read the engine's versions with one `docker version` call. Sets
 # CB_ENGINE_KIND (docker | podman | ""), CB_ENGINE_VERSION, CB_DESKTOP_VERSION
 # (set only on Docker Desktop), CB_RUNC_VERSION and their raw strings.
-cb_engine_facts() {
+cb_engine_version_facts() {
   local raw rest comps c
   raw="$(cb_docker version --format '{{.Server.Version}}|{{.Server.Platform.Name}}|{{range .Server.Components}}{{.Name}}={{.Version}};{{end}}|{{.Server.KernelVersion}}' 2>/dev/null | head -n 1)" || raw=""
   CB_ENGINE_KIND=""
@@ -141,7 +141,7 @@ cb_engine_findings() {
     printf 'fail\tthe list of minimum engine versions (%s) is missing; reinstall claude-ide-box\n' "$f"
     return 0
   fi
-  cb_engine_facts
+  cb_engine_version_facts
   if [ "$CB_ENGINE_KIND" = podman ]; then
     printf 'warn\tPodman %s: its version is not checked against known container escapes (only Docker Desktop, Docker Engine and runc are)\n' "${CB_ENGINE_RAW:-unknown}"
     return 0

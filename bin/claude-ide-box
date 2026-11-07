@@ -719,7 +719,7 @@ $findings
 EOF
   if [ "$any" = 0 ]; then
     # cb_engine_findings ran in a subshell; read the facts here for the summary.
-    cb_engine_facts
+    cb_engine_version_facts
     check_ok "$(cb_engine_summary): no known container escape ($(cb_engine_versions_file))"
   fi
 }
