@@ -134,11 +134,16 @@ line is an attribution (copyright, author, ...).
 |---|---|---:|---:|---:|---:|
 | spaCy | the whole file (before) | 7289 | 96.1 | 97.5 | 22.2 |
 | spaCy | strings and comments (after) | 3503 | 96.1 | 97.5 | 12.8 |
+| GLiNER | the whole file (before) | 581 \* | 98.5 | 99.0 | 1814 |
+| GLiNER | strings and comments (after) | 243 \* | 98.5 | 99.0 | 1075 |
 
-Measured in the development sandbox, all files. The text corpus is not code, so its masked share
+\* every 4th file (651 files): GLiNER is about 100 times slower.
+
+spaCy was measured in the development sandbox on all files and again in CI with the same counts
+(the CI runner is slower: 21.2 ms per code file after the change); GLiNER in CI only, by the
+`False alarms in code` workflow on the commit before the change and on the change. The text corpus is not code, so its masked share
 does not change; it is listed to show that. What remains comes mostly from documentation inside
 comments (JSDoc in lodash and rxjs: "Creates", "Checks", examples written as code in comments).
-GLiNER is measured by the `False alarms in code` workflow, on every 4th file.
 
 ## Not tested, and why
 
