@@ -30,7 +30,7 @@ do one of these:
 | execute code on the host | through the wrapper, the CLI, `guard`, `install.sh`, or anything Claude IDE Box itself runs on the host |
 | read host data outside the project | home directory, `~/.ssh`, other projects, the token file |
 | read a masked file | `.env`, `.env.*`, configured masks |
-| write a read-only path | `.git`, `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer`, configured entries |
+| write a read-only path | `.git`, `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer`, `.claude`, configured entries |
 | reach the network beyond the allowlist | other domains, other ports, bare IPs, DNS, host or LAN services |
 | change the sandbox configuration | anything under `~/.config/claude-ide-box`, the proxy allowlist |
 | make the wrapper run `claude` on the host | any fail-open path |
@@ -63,6 +63,10 @@ These are documented trade-offs, not vulnerabilities. Proposals to close them ar
 - **Docker-managed DNS stub.** Containers keep Docker's embedded resolver at `127.0.0.11`; it
   resolves names of containers on the same network but forwards nothing upstream
   (`--dns 127.0.0.1`).
+- **`CLAUDE.md` is writable.** Claude Code loads it as instructions, also in a session on the host.
+  That is a risk of injecting instructions into the model, not of executing code; hooks, which
+  execute, are configured in the read-only `.claude`. A permission rule added with "always allow"
+  is therefore not saved to the project (`CLAUDE_DIR_WRITABLE=1` changes that per project).
 - **Masks are applied when a container is created.** A secret file that appears while a session is
   running is visible to that session until the container is recreated; the next start recreates it
   or refuses to run.

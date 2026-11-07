@@ -300,11 +300,12 @@ CB_CONFIG_KEYS="SUBNET PROXY_IP UPSTREAM_PROXY PROXY_PRESETS PROFILE BUILD_PROFI
 CLAUDE_CODE_VERSION BASE_IMAGE PROXY_BASE_IMAGE BUILD_NETWORK MEMORY CPUS PIDS_LIMIT
 TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS READONLY_DEFAULTS READONLY GIT_WRITABLE
 NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS AUTO_GUARD CONTAINER_UID CONTAINER_GID
-EXTENSION_DIRS OCR_LANGUAGES ALLOW_VULNERABLE_DOCKER"
+EXTENSION_DIRS OCR_LANGUAGES ALLOW_VULNERABLE_DOCKER CLAUDE_DIR_WRITABLE"
 
 # Keys a per-project file may override. Network and build settings are global.
 CB_PROJECT_KEYS="PROFILE MEMORY CPUS PIDS_LIMIT TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS
-READONLY_DEFAULTS READONLY GIT_WRITABLE NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS"
+READONLY_DEFAULTS READONLY GIT_WRITABLE NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS
+CLAUDE_DIR_WRITABLE"
 
 cb_config_defaults() {
   CFG_SUBNET="172.30.99.0/24"
@@ -326,9 +327,12 @@ cb_config_defaults() {
   CFG_MASK_DEFAULTS=".env .env.*"
   CFG_MASK=""
   CFG_MASK_PRESETS=""
-  CFG_READONLY_DEFAULTS=".git .vscode .agent .agents .idea .devcontainer"
+  # .claude holds project settings, which can define hooks that a Claude Code
+  # run on the host would execute.
+  CFG_READONLY_DEFAULTS=".git .vscode .agent .agents .idea .devcontainer .claude"
   CFG_READONLY=""
   CFG_GIT_WRITABLE="0"
+  CFG_CLAUDE_DIR_WRITABLE="0"
   CFG_NONESSENTIAL_TRAFFIC="0"
   CFG_CLAUDEAI_CONNECTORS="0"
   CFG_AUTO_GUARD="1"
@@ -420,6 +424,10 @@ cb_validate_config() {
   case "$CFG_ALLOW_VULNERABLE_DOCKER" in
     0 | 1) ;;
     *) cb_die "ALLOW_VULNERABLE_DOCKER must be 0 or 1" ;;
+  esac
+  case "$CFG_CLAUDE_DIR_WRITABLE" in
+    0 | 1) ;;
+    *) cb_die "CLAUDE_DIR_WRITABLE must be 0 or 1" ;;
   esac
 }
 
@@ -792,6 +800,9 @@ cb_readonly_entries() {
   local out="$CFG_READONLY_DEFAULTS $CFG_READONLY" e res=""
   for e in $out; do
     if [ "$e" = ".git" ] && [ "$CFG_GIT_WRITABLE" = "1" ]; then
+      continue
+    fi
+    if [ "$e" = ".claude" ] && [ "$CFG_CLAUDE_DIR_WRITABLE" = "1" ]; then
       continue
     fi
     res="$res $e"

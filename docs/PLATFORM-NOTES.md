@@ -114,3 +114,22 @@ string, so suffixes (`-rd`, `+azure`, `-0ubuntu2`, `v` prefixes, `(build)`) do n
 empty or non-numeric version (`unknown`, `dev`, a missing runc component) is treated as vulnerable.
 The Docker Desktop row was not re-measured for this check; it follows the format documented for
 `docker version` on Docker Desktop and has to be confirmed on a Mac.
+
+## Read-only project `.claude`
+
+Measured with Claude Code 2.1.318 driven the way the extension drives it (stream-json, permission
+prompts over stdio, `--setting-sources=user,project,local`), against a fake Messages API, with
+`.claude` mounted read-only - in a container (`tests/integration/permission-probe.js`) and with a
+read-only bind mount on a Linux host:
+
+- the extension's "always allow" arrives as a permission response with
+  `updatedPermissions: [{type: "addRules", destination: "localSettings", ...}]`;
+- with `.claude` read-only the rule still applies for the rest of the session (the same command is
+  not asked about again), `.claude/settings.local.json` is not created or changed, nothing is printed
+  on stderr and no error message reaches the stream; the session ends normally;
+- the next session asks again;
+- with a writable `.claude` (`CLAUDE_DIR_WRITABLE=1`) the same exchange writes the rule to
+  `.claude/settings.local.json`.
+
+Claude Code also creates `.claude/worktrees/<name>` for worktree sessions; those cannot work with a
+read-only `.claude`.
