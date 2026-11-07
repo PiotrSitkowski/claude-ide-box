@@ -55,6 +55,11 @@ test was added red afterwards. End to end, pii-airgap's integration suite (with
 `CLAUDE_IDE_BOX_SRC` pointing here) anonymises, restores and starts this wrapper in the restored
 copy and in the `--out` folder - both refused - and in the tokenised copy - not refused.
 
+The read-only `.claude` was written the same way (first on the session-history branch, then moved
+to its own change). Run on `main` before the implementation, 2 of its 4 unit tests failed - the
+read-only directory list and `CLAUDE_DIR_WRITABLE`; `CLAUDE_DIR_WRITABLE must be 0 or 1` and
+`CLAUDE.md stays writable` passed, as refusal checks do against code that does not know the key.
+
 ## Integration tests
 
 `tests/integration/run.sh` builds the images, runs `claude-ide-box setup` in its own namespace
@@ -85,7 +90,11 @@ nothing was verified; with `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is 
 
 **Development sandbox - 69 passed, 0 failed, 0 skipped** with `CLAUDE_IDE_BOX_IT_PROFILES="python go
 java office"`, and 64 passed with `"python go"` after the combined-profile check was fixed (see
-below). Native Docker Engine 29.9.2 on Linux
+below). With the read-only `.claude` checks, **65 passed, 0 failed, 0 skipped** without profiles
+(7 of them the `.claude` checks). That run used a base image with Ubuntu's own `ubuntu` user
+(UID 1000) removed, because it ran as UID 30033 and the UID-collision path is not what it tested,
+and an apt/npm proxy setting in that base image: the suite runs `setup` with a throw-away `HOME`,
+so the Docker client's own proxy configuration does not reach the builds. Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
 all through regular configuration keys rather than test-only code paths:
