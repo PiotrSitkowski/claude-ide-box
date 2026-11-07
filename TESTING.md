@@ -35,10 +35,9 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 135 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 135 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image); the first run there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 145 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 145 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
-| Ubuntu 24.04 (bash 5.2) and the `bash:3.2` image, fixes from the first manual test | 133 passed, 0 failed in each (the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking in the `bash:3.2` image) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
 commit as the code, but were run red before the implementation existed (35 of 39 wrapper tests and
@@ -101,7 +100,11 @@ nothing was verified; with `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is 
 
 **Development sandbox - 69 passed, 0 failed, 0 skipped** with `CLAUDE_IDE_BOX_IT_PROFILES="python go
 java office"`, and 64 passed with `"python go"` after the combined-profile check was fixed (see
-below). Native Docker Engine 29.9.2 on Linux
+below). With the fixes from the first manual test, rebased on the pii-airgap check: **58 passed, 0
+failed, 0 skipped** without profiles, run as UID 30033 with a base image that has Ubuntu's own
+`ubuntu` user removed and an apt/npm proxy setting baked in (the suite runs `setup` with a
+throw-away `HOME`, so the Docker client's own proxy configuration does not reach the builds).
+Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
 all through regular configuration keys rather than test-only code paths:
