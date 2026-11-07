@@ -118,6 +118,16 @@ every cache entry miss.
   `anonymise` leaves a value in a binary file it cannot read (the fixture's `bin.dat`): `verify`
   reports it, so Claude IDE Box refuses such a copy until the file is masked or removed.
 
+- name dictionary pilot (Polish and English): `test_names` (16 tests) failed to import before
+  `names.py` and `names_build.py` existed; then 4 tests for the scan and the CLI (code files read as
+  code, `PII_AIRGAP_NAMES`, a missing dictionary fails closed, off by default) failed before that
+  wiring; after the first pilot run, 3 of 4 new tests failed before the fix (a function word taken
+  as a given name, a Wikidata-only name next to any capitalised word, the layer cutting a longer
+  model finding - this one had lowered the masked share with spaCy); the fourth, upper-case words
+  in code, passed vacuously because the fixture has no such names. The warning that NER is off now
+  names the dictionary; its assertion failed first. All tests use tiny synthetic sources built
+  with the same builder as the image; no registry data is in git.
+
 ## Not tested, and why
 
 - **GLiNER locally.** huggingface.co and download.pytorch.org were blocked in the development

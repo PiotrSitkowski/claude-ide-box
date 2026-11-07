@@ -79,6 +79,7 @@ Three layers, no single technique:
 | Legal forms | a run of capitalised words before `Sp. z o.o.`, `S.A.`, `GmbH`, `KG`, `Ltd`, `LLP`, `Inc.`... is one organisation | high | companies with a legal form |
 | Your lists | client names, project code names - `~/.config/pii-airgap/lists/*.txt`, one `term` or `TYPE: term` per line | exact | exactly what you list |
 | NER model | names, organisations, places | see below | see below |
+| Name dictionary (pilot, off by default) | Polish and English people: a registry given name next to a capitalised word, a surname after a title | see [the pilot](docs/NAMES-PILOT.md) | see the pilot |
 
 Weak checksums (NIP, REGON, BSN, ID card and passport numbers, Steuer-ID) only count when a context
 word is nearby ("NIP", "REGON", "BSN", "dowód"...), because about one random number in ten passes
@@ -159,6 +160,20 @@ with a stray space, an SSN without dashes, a UK mobile number, a German postcode
 Polish street name). Real documents will do worse. The NER rows are a fairer picture of the model,
 but the corpus is small and synthetic. One known trade-off of the sentence-start rule: a city that
 opens a sentence and that the model only recognises with its capital letter is not masked.
+
+### Name dictionary (pilot)
+
+An optional layer finds Polish and English people from registry names (PESEL, U.S. Census), with
+Polish inflection from PoliMorf. It is **off by default** until the pilot's numbers are reviewed.
+Build an image with it and it is used automatically:
+
+```bash
+docker build -f image/Dockerfile --build-arg NER=spacy --build-arg NAMES=dict -t pii-airgap .
+```
+
+`NAMES=rules` derives inflected forms from ending rules instead of storing them (a smaller database);
+`PII_AIRGAP_NAMES=off` or `--names off` turns it off at run time. Sources, licences and checksums are
+in [`names/sources.json`](names/sources.json); measurements in [docs/NAMES-PILOT.md](docs/NAMES-PILOT.md).
 
 ## Quick start
 
