@@ -28,6 +28,7 @@ dependency to install on every runner for no extra coverage.
 | `test_wrapper.sh` | dropping 0, 1 and 2 leading paths; subcommands and `/slash` prompts kept; stdout carries only the container's output; exit status and stdin passed through; container name and sanitisation; identical mount path; hardening flags; masks only for existing files (nested, directories, PrestaShop preset); read-only directories created with normal permissions; `GIT_WRITABLE`; recreate on a new secret file, refusal while a session is active; fail closed without daemon, without docker, without image, for `/`, `$HOME` and its parents; environment passed by name only with deny list and host-path filter; token never on a command line or in the log; host-path flags dropped, inline JSON kept, `..` escapes caught; parallel starts create one container; stale lock removal; invocation through a guard symlink; unknown config key fails closed; CPU clamping; automatic guard; paths with commas, quotes or newlines refused before `docker run` (mount-option injection); a symlinked secret is masked at the logical path when the project path itself contains a symlink; prompts that contain paths are not dropped; `~`-relative env values are not passed; invalid `MEMORY`/`CPUS`/`TMP_SIZE`/UID settings rejected; an active session is recognised for both `claude` and `claude.exe`; nested `.git` directories and files read-only, a new one triggers recreation; masks found inside `node_modules` and `vendor`; a masked file moved away (renamed parent) or replaced by a decoy stops the start until `up --recreate` |
 | `test_cli.sh` | `guard` on both bundled-binary layouts and several versions, idempotence, `--undo`, six concurrent runs keeping the original binary; `allow` validation and proxy reload; presets (`php`, `github` warning, `prestashop` per project); generated allowlist; `setup` (internal network with `inhibit_ipv4`, proxy attached at its fixed IP, UID/GID and version build args, profiles, build failure, no daemon); `up`, `up --recreate`, `down`, `rm`, `rm --volume`, `shell`, `status`, `logs`; `login --token-stdin` (mode 600, rejects garbage); `doctor` (healthy host, `useTerminal: true`, wrapper unset, legacy key, commented-out key, unguarded binary, `claude` running on the host, `claude` on PATH, no daemon, non-internal network, `git.autoRepositoryDetection` warning); modules: profile chains (`env:a.b`), user profiles and presets in `~/.config`, `profile`/`profiles`/`presets` commands, the current project's profiles built by `setup`, an unknown profile failing closed, a profile image with root-owned files in `/home/claude` rejected; `forward`: port validation, a TCP connection relayed through `docker exec ... socat`, loopback-only listener |
 | `test_pii.sh` | folders recorded by pii-airgap: no record, no check; the case from a manual test (a copy restored in place) refused before any container exists, stdout empty, the files named; a clean copy starts after a check with `--rm`, no network, read-only root, no capabilities, the copy and the map read-only, and the map never reaches the project container; a project inside a copy and a copy inside the project are checked; unrelated and vanished copies are ignored; a missing or replaced map refuses without running the check; a failed check refuses; control characters in file names from the copy never reach the terminal; `up` refuses too; a folder written by `restore --out` is refused with its own message |
+| `test_engine_versions.sh` | minimum engine versions: thresholds only in the data file, with CVE and source; Docker Desktop 4.44.2 fails, 4.44.3 warns, 4.97.0 and 4.98.0 pass; Docker Engine 25.0.1, 24.0.8, 23.0.6, 20.10.27 fail, 25.0.2, 24.0.9, 26.1.0, 29.9.2 pass; runc 1.1.11 and 1.0.0-rc95 fail, 1.1.12 passes; suffixes (`29.9.2-rd`, `28.0.4+azure-1`, `1.1.12-0ubuntu2~22.04.1`, `v1.1.14`, `(12345)`) and numeric comparison (4.9.0, 4.100.0); an empty, `unknown`, `dev` or `<no value>` engine version, a missing runc and a Docker Desktop without a readable version (also one recognised only by its linuxkit kernel) fail; `setup` refuses before building, warns below 4.97.0; the wrapper refuses with nothing on stdout and no container, `up` too; `ALLOW_VULNERABLE_DOCKER=1` (global only, 0/1) lets setup and the wrapper run while every `doctor` prints `[RISK]` and still fails; no colour codes off a terminal; Podman reported as not checked |
 | `test_install.sh` | install, settings snippet, idempotence, refusing to overwrite foreign files, no sudo, `--uninstall` undoes guard and keeps config, `--prefix` |
 | `test_integration_skip.sh` | the integration suite says SKIPPED without Docker and fails when `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` |
 
@@ -55,6 +56,12 @@ test was added red afterwards. End to end, pii-airgap's integration suite (with
 `CLAUDE_IDE_BOX_SRC` pointing here) anonymises, restores and starts this wrapper in the restored
 copy and in the `--out` folder - both refused - and in the tokenised copy - not refused.
 
+The minimum engine versions were written the same way: before the implementation 16 of the 19
+tests failed; the 3 that passed were the refusal of a bad `ALLOW_VULNERABLE_DOCKER` value, "no
+colour codes off a terminal" and "the wrapper runs on a current Docker", which code without the
+check also satisfies. A twentieth test, a Docker Desktop recognised only by its linuxkit kernel,
+was added afterwards and run red before its implementation.
+
 ## Integration tests
 
 `tests/integration/run.sh` builds the images, runs `claude-ide-box setup` in its own namespace
@@ -72,6 +79,7 @@ real installation, and then checks from inside real containers:
 | (g) wrapper | `claude-ide-box-exec /fake/native-binary/claude --version` prints exactly one line, the version |
 | extra | host listeners unreachable on the internal gateway and `docker0` (with a positive control from the default bridge); Claude Code's API request goes through squid without DNS (tunnel count in the squid log rises, the API answers "Invalid API key" to a fake key); squid runs without capabilities as `proxy` on a read-only rootfs; `claude-ide-box logs` shows the denial; one project's `~/.claude` and files are invisible to another; fail closed with an unreachable daemon and for `$HOME` |
 | allowlist reload | a domain is refused before `claude-ide-box allow` and passes right after it, and squid confirms the reload (it is signalled with SIGHUP; `squid -k reconfigure` depends on a PID file that `squid -N` does not always write, which made the reload fail on Debian's squid 5.7 in CI) |
+| minimum engine versions | `doctor` reads the real engine's Engine and runc versions and finds no known escape |
 | security fixes | a nested `.git` is read-only after the next start; a directory named `q,src=$HOME,dst=...` with a `.env` inside stops the container from being created |
 | dev servers | `claude-ide-box forward` serves a server running in the container on `127.0.0.1` of the host; the container still publishes no ports |
 | base image | a native npm module compiles with node-gyp (no header download); Python 3 with venv |
@@ -84,7 +92,11 @@ nothing was verified; with `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is 
 
 **Development sandbox - 69 passed, 0 failed, 0 skipped** with `CLAUDE_IDE_BOX_IT_PROFILES="python go
 java office"`, and 64 passed with `"python go"` after the combined-profile check was fixed (see
-below). Native Docker Engine 29.9.2 on Linux
+below). With the minimum-version check, **59 passed, 0 failed, 0 skipped** without profiles (58 on
+`main` in the same setup). That run used a base image with Ubuntu's own `ubuntu` user (UID 1000)
+removed, because it ran as UID 30033 and the UID-collision path is not what it tested, and an
+apt/npm proxy setting in that base image: the suite runs `setup` with a throw-away `HOME`, so the
+Docker client's own proxy configuration does not reach the builds. Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
 all through regular configuration keys rather than test-only code paths:
@@ -127,7 +139,7 @@ inspection), `CLAUDE_IDE_BOX_IT_BASE_IMAGE`, `CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE
 |---|---|
 | Subscription login (`claude-ide-box login`) | needs a real account and a browser |
 | The IDE extension driving the wrapper | needs a desktop IDE; only the wrapper's contract (argv, stdout, exit codes, stdin) is tested |
-| Docker Desktop (macOS, Windows/WSL2) | no Docker Desktop in CI. Its VM, file sharing, ownership mapping and DNS layer differ from native Linux; in particular `inhibit_ipv4`, `--dns 127.0.0.1` on an internal network and bind-mounting a file over a project path need checking there |
+| Docker Desktop (macOS, Windows/WSL2) | no Docker Desktop in CI. The minimum-version check reads the Desktop version from `Platform.Name` of `docker version`, which was not seen on a real Desktop here. Its VM, file sharing, ownership mapping and DNS layer differ from native Linux; in particular `inhibit_ipv4`, `--dns 127.0.0.1` on an internal network and bind-mounting a file over a project path need checking there |
 | Apple Silicon | images are multi-arch by construction (all bases are), not built on arm64 in CI |
 | macOS `ps`, `/bin/bash` 3.2 against real IDE settings paths | unit tests run on macOS but with fake extension and settings directories |
 

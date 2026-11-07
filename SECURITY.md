@@ -43,7 +43,10 @@ do one of these:
   sandbox (see the threat model in the README).
 - Data sent to an allowlisted domain. Allowlisted domains are deliberate exits.
 - Container escapes through kernel or container runtime bugs - report those upstream (Docker,
-  runc, containerd, the kernel). A Claude IDE Box configuration that makes such a bug reachable when it
+  runc, containerd, the kernel). Known ones are refused: claude-ide-box will not set up or start a
+  container on a Docker Desktop, Docker Engine or runc version listed in
+  `lib/claude-ide-box/engine-versions.txt` (unless `ALLOW_VULNERABLE_DOCKER=1`); a way around that
+  check *is* in scope. A Claude IDE Box configuration that makes such a bug reachable when it
   otherwise would not be *is* in scope.
 - The IDE extension itself.
 
