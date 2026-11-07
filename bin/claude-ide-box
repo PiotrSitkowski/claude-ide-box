@@ -54,6 +54,11 @@ Current project (the working directory)
   forward PORT [HOST_PORT]    open a dev server running in the container (e.g. 5173)
                               at http://127.0.0.1:HOST_PORT on the host
   status                      show proxy, network and container state
+  deps [on [PATH...]|off|install]
+                              give the container its own node_modules, .venv, ...
+                              on a volume (the host keeps its own copies)
+  scan                        look for secret-looking values the container could read
+  mask [PATTERN...]           mask more files for this project (--remove to undo)
 
 Network
   allow DOMAIN                add DOMAIN (or .DOMAIN for subdomains) to the allowlist
@@ -458,6 +463,11 @@ cmd_rm() {
   if [ "$volume" = 1 ]; then
     cb_docker volume rm "$CB_VOLUME" >/dev/null 2>&1 || cb_die "cannot remove volume $CB_VOLUME"
     say "removed volume $CB_VOLUME (conversation history and ~/.claude of this project)"
+    local v
+    for v in $(cb_deps_project_volumes); do
+      cb_docker volume rm "$v" >/dev/null 2>&1 || cb_die "cannot remove volume $v"
+      say "removed dependency volume $v"
+    done
   else
     say "kept volume $CB_VOLUME (use --volume to delete conversation history too)"
   fi
@@ -552,6 +562,131 @@ EOF
       ;;
     *) cb_die "usage: claude-ide-box guard [--undo|--status]" ;;
   esac
+}
+
+# --------------------------------------------------------------------------
+# deps: dependency volumes
+# --------------------------------------------------------------------------
+
+cmd_deps() {
+  local sub="${1:-}" e list p vol
+  [ $# -eq 0 ] || shift
+  project_from_pwd
+  cb_load_config
+  case "$sub" in
+    on)
+      list="${*:-node_modules .venv}"
+      for e in $list; do
+        cb_deps_valid_entry "$e" || cb_die "'$e' is not usable: give a path relative to the project such as node_modules or web/.venv"
+      done
+      cb_config_set "$CB_PROJECT_CONFIG" DEPS_VOLUMES "$list"
+      say "dependency volumes for $CB_PROJECT_DIR: $list"
+      say "the container gets its own copy of these directories; the host keeps its own, unchanged"
+      say "next: 'claude-ide-box deps install' (recreates the container and installs from the lockfile in it)"
+      ;;
+    off)
+      [ $# -eq 0 ] || cb_die "usage: claude-ide-box deps off"
+      cb_config_set "$CB_PROJECT_CONFIG" DEPS_VOLUMES ""
+      say "dependency volumes off for $CB_PROJECT_DIR (applies when the container is next created; 'claude-ide-box up --recreate')"
+      say "the volumes are kept; 'claude-ide-box rm --volume' deletes them with the rest of the project's data"
+      ;;
+    install)
+      [ $# -eq 0 ] || cb_die "usage: claude-ide-box deps install"
+      cb_find_docker
+      cb_require_docker
+      cb_deps_install
+      say "dependencies installed in the container"
+      ;;
+    "" | status)
+      say "DEPS_VOLUMES: ${CFG_DEPS_VOLUMES:-(none)}"
+      if [ -n "$CFG_DEPS_VOLUMES" ]; then
+        local paths
+        paths="$(cb_deps_paths "$CB_PROJECT_DIR" nocreate)" || exit 1
+        cb_find_docker
+        while IFS= read -r p; do
+          [ -n "$p" ] || continue
+          vol="$(cb_deps_volume_name "$p")"
+          if cb_docker volume inspect "$vol" >/dev/null 2>&1; then
+            say "  ${p#"$CB_PROJECT_DIR"/}  -> volume $vol"
+          else
+            say "  ${p#"$CB_PROJECT_DIR"/}  -> volume $vol (not created yet)"
+          fi
+        done <<EOF
+$paths
+EOF
+        CB_DEPS_LIST="$paths"
+      fi
+      list="$(cb_foreign_native_deps "$CB_PROJECT_DIR")"
+      if [ -n "$list" ]; then
+        say "built for another platform and visible in the container: $(cb_foreign_summary "$list")"
+      fi
+      ;;
+    *) cb_die "usage: claude-ide-box deps [on [PATH...]|off|install]" ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
+# scan and mask: secrets the container could read
+# --------------------------------------------------------------------------
+
+# cb_prepare_scan - set CB_DEPS_LIST and CB_MOUNTS for the scan without
+# creating anything on the host.
+cb_prepare_scan() {
+  CB_DEPS_LIST="$( (cb_deps_paths "$CB_PROJECT_DIR" nocreate) 2>/dev/null || true)"
+  CB_MOUNTS="$(printf '%s\n' "$CB_DEPS_LIST" | awk 'NF { print "deps\t" $0 }')
+$( (cb_compute_mask_mounts "$CB_PROJECT_DIR") 2>/dev/null || true)"
+}
+
+cb_say_finding() {
+  say "possible secret: $*"
+}
+
+cmd_scan() {
+  [ $# -eq 0 ] || cb_die "usage: claude-ide-box scan"
+  project_from_pwd
+  cb_load_config
+  cb_prepare_scan
+  local findings
+  findings="$(cb_secret_findings "$CB_PROJECT_DIR")"
+  if [ -z "$findings" ]; then
+    say "no secret-looking values found in files the container can read (masked files and dependencies are skipped)"
+    return 0
+  fi
+  cb_report_findings "$findings" cb_say_finding
+  say ""
+  say "values are never printed; check each file and mask what the container must not read"
+}
+
+cmd_mask() {
+  local remove=0 p list
+  if [ "${1:-}" = "--remove" ]; then
+    remove=1
+    shift
+    [ $# -gt 0 ] || cb_die "usage: claude-ide-box mask --remove PATTERN..."
+  fi
+  project_from_pwd
+  cb_load_config
+  if [ $# -eq 0 ]; then
+    say "masked by default:      $CFG_MASK_DEFAULTS"
+    say "masked if holding a secret: ${CFG_MASK_IF_SECRET:-(none)}"
+    say "masked for this project: ${CFG_MASK:-(none)}"
+    [ -z "$CFG_MASK_PRESETS" ] || say "mask presets:           $CFG_MASK_PRESETS"
+    say "(a name such as secrets.yml matches at any depth; a path such as config/db.yml is anchored at the project root)"
+    return 0
+  fi
+  list="$CFG_MASK"
+  for p in "$@"; do
+    p="${p#./}"
+    cb_valid_mask_pattern "$p" || cb_die "'$p' is not a usable mask pattern (a path relative to the project, no '..', spaces, commas or quotes)"
+    if [ "$remove" = 1 ]; then
+      list="$(cb_toggle_word "$list" "$p" off)"
+    else
+      list="$(cb_toggle_word "$list" "$p" on)"
+    fi
+  done
+  cb_config_set "$CB_PROJECT_CONFIG" MASK "$list"
+  say "masked for $CB_PROJECT_DIR: ${list:-(none)}"
+  say "applies when the container is next created (the next session does it, or 'claude-ide-box up --recreate')"
 }
 
 # --------------------------------------------------------------------------
@@ -780,6 +915,29 @@ EOF
   fi
 }
 
+# The project in the working directory, if any: what the container would see.
+doctor_project() {
+  (cb_set_project "${PWD:-$(pwd)}") >/dev/null 2>&1 || return 0
+  project_from_pwd
+  cb_load_config
+  cb_prepare_scan
+  local found findings
+  found="$(cb_foreign_native_deps "$CB_PROJECT_DIR")"
+  if [ -n "$found" ]; then
+    check_warn "project: native dependencies built for another platform: $(cb_foreign_summary "$found") - $CB_FOREIGN_HINT"
+  else
+    check_ok "project: no native dependencies built for another platform"
+  fi
+  if [ "$CFG_SECRET_SCAN" = 1 ]; then
+    findings="$(cb_secret_findings "$CB_PROJECT_DIR")"
+    if [ -n "$findings" ]; then
+      cb_report_findings "$findings" check_warn
+    else
+      check_ok "project: no secret-looking values in files the container can read"
+    fi
+  fi
+}
+
 cmd_doctor() {
   local image info b state n=0 bad="" host_claude
   cb_load_config
@@ -861,6 +1019,7 @@ EOF
 
   doctor_settings
   doctor_processes
+  doctor_project
 
   if [ "$DOCTOR_FAILED" = 1 ]; then
     printf '\nSome checks failed.\n'
@@ -889,6 +1048,9 @@ main() {
     preset) cmd_preset "$@" ;;
     presets) cmd_presets "$@" ;;
     forward) cmd_forward "$@" ;;
+    deps) cmd_deps "$@" ;;
+    scan) cmd_scan "$@" ;;
+    mask) cmd_mask "$@" ;;
     profile) cmd_profile "$@" ;;
     profiles) cmd_profiles "$@" ;;
     guard) cmd_guard "$@" ;;

@@ -27,6 +27,8 @@ dependency to install on every runner for no extra coverage.
 |---|---|
 | `test_wrapper.sh` | dropping 0, 1 and 2 leading paths; subcommands and `/slash` prompts kept; stdout carries only the container's output; exit status and stdin passed through; container name and sanitisation; identical mount path; hardening flags; masks only for existing files (nested, directories, PrestaShop preset); read-only directories created with normal permissions; `GIT_WRITABLE`; recreate on a new secret file, refusal while a session is active; fail closed without daemon, without docker, without image, for `/`, `$HOME` and its parents; environment passed by name only with deny list and host-path filter; token never on a command line or in the log; host-path flags dropped, inline JSON kept, `..` escapes caught; parallel starts create one container; stale lock removal; invocation through a guard symlink; unknown config key fails closed; CPU clamping; automatic guard; paths with commas, quotes or newlines refused before `docker run` (mount-option injection); a symlinked secret is masked at the logical path when the project path itself contains a symlink; prompts that contain paths are not dropped; `~`-relative env values are not passed; invalid `MEMORY`/`CPUS`/`TMP_SIZE`/UID settings rejected; an active session is recognised for both `claude` and `claude.exe`; nested `.git` directories and files read-only, a new one triggers recreation; masks found inside `node_modules` and `vendor`; a masked file moved away (renamed parent) or replaced by a decoy stops the start until `up --recreate` |
 | `test_cli.sh` | `guard` on both bundled-binary layouts and several versions, idempotence, `--undo`, six concurrent runs keeping the original binary; `allow` validation and proxy reload; presets (`php`, `github` warning, `prestashop` per project); generated allowlist; `setup` (internal network with `inhibit_ipv4`, proxy attached at its fixed IP, UID/GID and version build args, profiles, build failure, no daemon); `up`, `up --recreate`, `down`, `rm`, `rm --volume`, `shell`, `status`, `logs`; `login --token-stdin` (mode 600, rejects garbage); `doctor` (healthy host, `useTerminal: true`, wrapper unset, legacy key, commented-out key, unguarded binary, `claude` running on the host, `claude` on PATH, no daemon, non-internal network, `git.autoRepositoryDetection` warning); modules: profile chains (`env:a.b`), user profiles and presets in `~/.config`, `profile`/`profiles`/`presets` commands, the current project's profiles built by `setup`, an unknown profile failing closed, a profile image with root-owned files in `/home/claude` rejected; `forward`: port validation, a TCP connection relayed through `docker exec ... socat`, loopback-only listener |
+| `test_deps.sh` | `DEPS_VOLUMES`: a volume over `node_modules` (none by default); missing root directories created on the host; a name matches nested workspaces but not inside itself, a path is anchored; masks and nested `.git` inside a dependency directory not mounted (still mounted without volumes); a new volume labelled and handed to the container user by a one-off container with no network, only `CAP_CHOWN` and no project mount, not touched again; a changed setting recreates the container; a symlink, a file, absolute, `..`, `.`, `.git`, `.vscode` and comma paths fail closed; stdout clean; an empty new volume announced; `deps on/off/status`; `deps install` per lockfile (npm, pnpm, Yarn classic and Berry), once per workspace, Python venv (requirements, uv), no lockfile refused before anything runs, install failure reported; `rm --volume` removes the volumes; binaries of another platform (`@esbuild/darwin-*`, `rollup-darwin-*`, pnpm store, `workerd-windows-*`, `sharp-win32-*`, a macOS `.venv`) reported on the first start and by `doctor`, `is-windows` and Linux ones not, nothing reported when hidden by a volume or when the container already exists |
+| `test_secrets.sh` | the new default masks (`.dev.vars*`, `.npmrc`, `.netrc`, `.envrc`, `*.pem`, `*.key`, `credentials*.json`, `service-account*.json`) and ordinary files left alone, narrowing `MASK_DEFAULTS` per project; `.mcp.json` masked with a key in a URL query, a literal `env` value or an `Authorization` header, visible without secrets or with `${VAR}` placeholders, masked once a secret appears; the scan on container creation finds a secret in a URL query string, in JSON, in `.npmrc`, known token formats and private keys, reports file, line and the `mask` command, never the value (stdout, stderr, log), ignores placeholders, version ranges, `author`, masked files, `node_modules` and lockfiles, runs only on creation, `SECRET_SCAN=0`; `scan` and `mask` (add, list, `--remove`, refusing `..`, absolute and spaced patterns); `doctor` reports findings |
 | `test_install.sh` | install, settings snippet, idempotence, refusing to overwrite foreign files, no sudo, `--uninstall` undoes guard and keeps config, `--prefix` |
 | `test_integration_skip.sh` | the integration suite says SKIPPED without Docker and fails when `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` |
 
@@ -34,8 +36,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 123 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 123 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image) |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 180 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 180 passed, 0 failed (the `forward` test reports SKIPPED: no perl in that image) |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
@@ -46,6 +48,13 @@ injection, nested repositories and mask escapes, then a decoy-replacement test, 
 fixes, and so were the 8 tests for the code review findings. One of them is worth noting: six
 concurrent `guard` runs made one process `chmod a-x` a `.orig` that another had just turned into
 a symlink, which removed the execute bit from the real wrapper.
+
+Dependency volumes and the secret checks were written the same way. Before the implementation 38
+of the 57 new tests failed (19 of 27 in `test_deps.sh`, 19 of 30 in `test_secrets.sh`); the ones
+that passed check refusals or the absence of something (no volume by default, no warning for
+placeholders, a symlink refused), which a missing feature also satisfies. Getting them green
+caught a `.vscode` entry that was not refused because the validation split words with `IFS=/`,
+and `is-windows` (a common npm package) reported as a Windows binary.
 
 ## Integration tests
 
@@ -64,6 +73,7 @@ real installation, and then checks from inside real containers:
 | (g) wrapper | `claude-ide-box-exec /fake/native-binary/claude --version` prints exactly one line, the version |
 | extra | host listeners unreachable on the internal gateway and `docker0` (with a positive control from the default bridge); Claude Code's API request goes through squid without DNS (tunnel count in the squid log rises, the API answers "Invalid API key" to a fake key); squid runs without capabilities as `proxy` on a read-only rootfs; `claude-ide-box logs` shows the denial; one project's `~/.claude` and files are invisible to another; fail closed with an unreachable daemon and for `$HOME` |
 | allowlist reload | a domain is refused before `claude-ide-box allow` and passes right after it, and squid confirms the reload (it is signalled with SIGHUP; `squid -k reconfigure` depends on a PID file that `squid -N` does not always write, which made the reload fail on Debian's squid 5.7 in CI) |
+| dependency volumes and secrets | in a project with `@esbuild/darwin-x64` in `node_modules` and secrets in `.mcp.json`, `.npmrc` and a YAML URL: the first start reports the foreign binaries and the YAML secret with the `mask` command, the value appears nowhere (stderr, log); `.mcp.json` and `.npmrc` are empty in the container; `deps on` + `deps install` runs `npm ci` in the container through the proxy; the package is in the container's `node_modules`, owned by the container user; the host's `node_modules` is untouched and its darwin binaries are hidden in the container; what the container writes to `node_modules` does not reach the host; no report on the next start; `rm --volume` removes the volume |
 | security fixes | a nested `.git` is read-only after the next start; a directory named `q,src=$HOME,dst=...` with a `.env` inside stops the container from being created |
 | dev servers | `claude-ide-box forward` serves a server running in the container on `127.0.0.1` of the host; the container still publishes no ports |
 | base image | a native npm module compiles with node-gyp (no header download); Python 3 with venv |
@@ -76,7 +86,12 @@ nothing was verified; with `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is 
 
 **Development sandbox - 69 passed, 0 failed, 0 skipped** with `CLAUDE_IDE_BOX_IT_PROFILES="python go
 java office"`, and 64 passed with `"python go"` after the combined-profile check was fixed (see
-below). Native Docker Engine 29.9.2 on Linux
+below). With the dependency-volume and secret checks, **71 passed, 0 failed, 0 skipped** without
+profiles (13 of them new; 58 on `main` in the same setup). That run used a base image with Ubuntu's
+own `ubuntu` user (UID 1000) removed, because it ran as UID 30033 and the UID-collision path is not
+what it tested, and an apt/npm proxy setting in that base image: the suite runs `setup` with a
+throw-away `HOME`, so the Docker client's own proxy configuration does not reach the builds.
+Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
 all through regular configuration keys rather than test-only code paths:
@@ -102,6 +117,25 @@ Earlier CI runs caught things this sandbox could not: the IDE settings path on m
 tests, the squid reload failing on Debian's squid 5.7, a shellcheck 0.11 warning, the `forward`
 message appearing before its socket listened, and a lock race in which a waiter could remove a live
 lock whose holder had not written its pid yet (now reproduced deterministically by a unit test).
+
+### Dependency volumes, measured
+
+`tests/perf/deps-bench.sh [RUNS]` builds a TypeScript project with 300 vitest test files (vitest
+2.1.9, esbuild and rollup native, zod), then times `npm ci` (with a warm npm cache on its own
+volume) and `vitest run` with `node_modules` on the bind-mounted project and on a named volume, in a
+plain `node` container.
+
+| Host | Mode | `npm ci` | `vitest run` |
+|---|---|---|---|
+| Linux x86_64, native Docker Engine 29.9.2, 4 CPUs (development sandbox) | bind mount | 1.5 s | 23.7 s |
+| same | named volume | 1.6 s | 24.2 s |
+| macOS + Docker Desktop | both | **not measured yet** | **not measured yet** |
+
+Medians of 3 runs. On native Linux both are the same filesystem, so no difference was expected and
+none was found: the measurement shows the volume costs nothing there. The speed-up on Docker
+Desktop for macOS, where a bind mount crosses the VM's file sharing on every file access, is the
+reason it is mentioned in the README, but it was **not measured**; it is an estimate until someone
+runs the script on a Mac.
 
 ### Running them yourself
 
