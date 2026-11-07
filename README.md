@@ -83,8 +83,8 @@ sequenceDiagram
 | `guard` | Replaces the binary bundled with every installed extension version by a symlink to the wrapper, so even an extension that ignores the wrapper setting lands in the container. |
 
 The first start creates the read-only directories that do not exist yet (`.git`, `.vscode`,
-`.idea`, `.agent`, `.agents`, `.devcontainer`) as empty directories owned by you; otherwise Claude
-could create them writable. Git ignores an empty `.git` directory, and `git init` on the host
+`.idea`, `.agent`, `.agents`, `.devcontainer`, `.claude`) as empty directories owned by you;
+otherwise Claude could create them writable. Git ignores an empty `.git` directory, and `git init` on the host
 fills it normally.
 
 One container and one home volume exist **per project** (`claude-ide-box-<name>-<hash>`), so hooks,
@@ -100,7 +100,7 @@ rest of your machine.
 |---|---|
 | read `~/.ssh`, `~/.aws`, `~/.gitconfig`, other projects, your home | only the project directory is mounted; home and `docker.sock` never are |
 | read `.env`, `.env.*` (and PrestaShop config with the preset) | bind-mounted over with an empty read-only file / empty tmpfs |
-| plant git hooks or IDE tasks | `.git` (at every depth), `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer` are read-only |
+| plant git hooks, IDE tasks or Claude Code hooks | `.git` (at every depth), `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer`, `.claude` are read-only |
 | unmask a secret by renaming or replacing it | masked paths are recorded with their inode; a moved or swapped one stops the next start |
 | smuggle mount options through file names | paths with commas, quotes or control characters stop the start instead of reaching `docker --mount` |
 | reach arbitrary hosts | no route out; the proxy allows only CONNECT :443 to listed domains |
@@ -118,6 +118,9 @@ rest of your machine.
 >   The `github` preset in particular lets anything with a token push data out.
 > - **Conversation history lives in the container's volume**, not in your `~/.claude`. Removing it
 >   (`claude-ide-box rm --volume`) deletes that history.
+> - **`CLAUDE.md` stays writable.** A `CLAUDE.md` that Claude writes is read as instructions by any
+>   later Claude Code session, also one on the host: a risk of injecting instructions into the
+>   model, not of executing code (hooks, which do execute, live in the read-only `.claude`).
 > - **A repository Claude creates mid-session is writable until the next start.** Then its `.git`
 >   becomes read-only. Until then, only the IDE setting `"git.autoRepositoryDetection": false`
 >   keeps the host from running git (hooks, `core.fsmonitor`) in it; `doctor` warns without it.
@@ -235,6 +238,25 @@ the map in clear text. If it finds any - a restored folder always holds them, a 
 in-place restore or when a value was written into it - or if the map is gone, was replaced or the
 check cannot run, nothing starts and the message names the files (never the values). The project
 container never sees the map.
+
+### Project `.claude` is read-only
+
+`.claude` in the project holds Claude Code's project settings, and those can define hooks: shell
+commands that a Claude Code run *on the host* in this project would execute. So `.claude` is
+read-only in the box like `.git`. Consequences, measured with Claude Code 2.1.318 (see
+[PLATFORM-NOTES](docs/PLATFORM-NOTES.md#read-only-project-claude)):
+
+- **"Always allow" in a permission prompt is not saved to the project.** The rule applies until the
+  session ends, the failed write to `.claude/settings.local.json` is silent (no error in the panel,
+  the session goes on), and the next session asks again. Rules in your user settings are not
+  affected - they live in the container's `~/.claude`.
+- Project commands, agents and skills you keep in `.claude` still work; Claude cannot add or change
+  them. `--worktree` sessions, which create `.claude/worktrees`, do not work.
+
+To let Claude write `.claude` in one project, put `CLAUDE_DIR_WRITABLE=1` in
+`~/.config/claude-ide-box/projects/<container>.conf` (`claude-ide-box status` shows the name) and run
+`claude-ide-box up --recreate`. Then review `.claude/settings*.json` before running Claude Code on
+the host in that project.
 
 ## What runs in the box
 
@@ -375,6 +397,7 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `MASK_PRESETS` * | | `prestashop` |
 | `READONLY` * | | extra read-only paths, e.g. `.husky .envrc` |
 | `GIT_WRITABLE` * | `0` | `1` lets Claude commit (it can then also write `.git/hooks`) |
+| `CLAUDE_DIR_WRITABLE` * | `0` | `1` lets Claude write the project's `.claude` (it can then also add hooks; "always allow" is saved) |
 | `MEMORY` / `CPUS` / `PIDS_LIMIT` * | `4g` / `2` / `512` | container limits |
 | `NONESSENTIAL_TRAFFIC` * | `0` | `1` allows telemetry and error reporting |
 | `CLAUDEAI_CONNECTORS` * | `0` | `1` exposes claude.ai connectors (needs `mcp-proxy.anthropic.com` allowed) |

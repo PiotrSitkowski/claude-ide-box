@@ -154,10 +154,38 @@ test_prestashop_mask_preset() {
 test_readonly_dirs_created_and_mounted() {
   run_wrapper --version
   local d
-  for d in .git .vscode .agent .agents .idea .devcontainer; do
+  for d in .git .vscode .agent .agents .idea .devcontainer .claude; do
     assert_file_exists "$PROJECT/$d"
     assert_contains "$(run_args)" "type=bind,src=$PROJECT/$d,dst=$PROJECT/$d,readonly"
   done
+}
+
+test_claude_md_stays_writable() {
+  : >"$PROJECT/CLAUDE.md"
+  run_wrapper --version
+  assert_not_contains "$(run_args)" "CLAUDE.md"
+}
+
+test_claude_dir_writable_option() {
+  local name
+  run_wrapper --version
+  assert_contains "$(run_args)" "dst=$PROJECT/.claude,readonly"
+  name="$(cat "$FAKE_DOCKER_DIR/exec.name")"
+  mkdir -p "$HOME/.config/claude-ide-box/projects"
+  echo 'CLAUDE_DIR_WRITABLE=1' >"$HOME/.config/claude-ide-box/projects/$name.conf"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_not_contains "$(run_args)" "dst=$PROJECT/.claude,"
+  assert_contains "$(run_args)" "dst=$PROJECT/.git,readonly"
+  assert_contains "$(cat "$FAKE_DOCKER_DIR/calls")" "rm -f" "the container is recreated with the new setting"
+}
+
+test_claude_dir_writable_must_be_0_or_1() {
+  mkdir -p "$HOME/.config/claude-ide-box"
+  echo 'CLAUDE_DIR_WRITABLE=yes' >"$HOME/.config/claude-ide-box/config"
+  run_wrapper --version
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "CLAUDE_DIR_WRITABLE"
 }
 
 test_git_writable_option() {
