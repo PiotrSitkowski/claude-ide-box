@@ -1,0 +1,22 @@
+# Minimum container engine versions. claude-ide-box refuses to set up or start
+# a container on a version below a "fail" line (a known container escape) and
+# warns below a "warn" line. Update this file, not the scripts, when a new
+# advisory comes out; keep the source link.
+#
+# Columns (whitespace-separated; the description is the rest of the line):
+#   component  docker-desktop | docker-engine | runc
+#   line       major version the rule is for, or * for every major version
+#              that has no rule of its own for the same advisory
+#   fixed-in   first version without the problem
+#   level      fail | warn
+#   advisory   CVE id or a short name
+#   source     where the threshold comes from
+#   description
+#
+# Podman is not covered: doctor says so instead of passing it.
+
+docker-desktop  *   4.44.3  fail  CVE-2025-9074         https://docs.docker.com/security/security-announcements/  a container can reach the Docker Engine API without the socket being mounted, and from there the host
+docker-desktop  *   4.97.0  warn  latest-isolation-fix  https://docs.docker.com/security/security-announcements/  the release with the most recent container isolation fix in Docker's security announcements
+runc            *   1.1.12  fail  CVE-2024-21626        https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv  a leaked file descriptor lets a container reach the host filesystem ("Leaky Vessels")
+docker-engine   24  24.0.9  fail  CVE-2024-21626        https://www.docker.com/blog/docker-security-advisory-multiple-vulnerabilities-in-runc-buildkit-and-moby/  the 24.0 line ships the runc fix from 24.0.9
+docker-engine   *   25.0.2  fail  CVE-2024-21626        https://www.docker.com/blog/docker-security-advisory-multiple-vulnerabilities-in-runc-buildkit-and-moby/  ships a runc with a known container escape ("Leaky Vessels")
