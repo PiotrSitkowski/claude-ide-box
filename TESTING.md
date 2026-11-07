@@ -36,8 +36,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 177 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 177 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 184 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 184 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
@@ -83,6 +83,11 @@ colour codes off a terminal" and "the wrapper runs on a current Docker", which c
 check also satisfies. A twentieth test, a Docker Desktop recognised only by its linuxkit kernel,
 was added afterwards and run red before its implementation.
 
+The read-only `.claude` was written the same way (first on the session-history branch, then moved
+to its own change). Run on `main` before the implementation, 2 of its 4 unit tests failed - the
+read-only directory list and `CLAUDE_DIR_WRITABLE`; `CLAUDE_DIR_WRITABLE must be 0 or 1` and
+`CLAUDE.md stays writable` passed, as refusal checks do against code that does not know the key.
+
 ## Integration tests
 
 `tests/integration/run.sh` builds the images, runs `claude-ide-box setup` in its own namespace
@@ -120,6 +125,8 @@ failed, 0 skipped** without profiles, run as UID 30033 with a base image that ha
 throw-away `HOME`, so the Docker client's own proxy configuration does not reach the builds).
 With the minimum-version check: **59 passed, 0 failed, 0 skipped** without profiles (58 on `main` at
 `550788b` in the same setup).
+With the read-only `.claude` checks: **66 passed, 0 failed, 0 skipped** without profiles (59 on `main` at `1b0166a` in the same
+setup); 7 of them are the `.claude` checks.
 Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
