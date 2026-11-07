@@ -16,12 +16,6 @@ if [ "$uid" -eq 0 ] || [ "$gid" -eq 0 ]; then
   exit 1
 fi
 
-# Group: reuse an existing group with that GID (macOS users are GID 20, which is
-# "dialout" in Debian - membership is harmless in a container without devices).
-if ! getent group "$gid" >/dev/null; then
-  groupadd --gid "$gid" "$name"
-fi
-
 # User: an existing account with that UID is removed only when it is the
 # image's default "node" user or a regular (>= 1000) account; a collision with
 # a system account is an error rather than a silent takeover.
@@ -36,6 +30,23 @@ if [ -n "$existing" ] && [ "$existing" != "$name" ]; then
 fi
 if getent passwd "$name" >/dev/null; then
   userdel --remove "$name" 2>/dev/null || userdel "$name"
+fi
+
+# Group: named "claude", with the host's GID. An existing group with that GID
+# is renamed rather than reused under its own name: macOS users are GID 20,
+# which is "dialout" in Debian, and `ls -l` showing files owned by
+# claude:dialout looks like device access the container does not have. Only
+# the name changes; files and processes refer to the number. Checked only
+# after the accounts above are removed: removing one also removes its
+# personal group (the node image's "node", Ubuntu's "ubuntu", both GID 1000).
+current="$(getent group "$gid" | cut -d: -f1 || true)"
+if [ "$current" != "$name" ] && getent group "$name" >/dev/null; then
+  groupdel "$name"
+fi
+if [ -z "$current" ]; then
+  groupadd --gid "$gid" "$name"
+elif [ "$current" != "$name" ]; then
+  groupmod --new-name "$name" "$current"
 fi
 
 useradd --uid "$uid" --gid "$gid" --home-dir "$home" --create-home --shell /bin/bash "$name"

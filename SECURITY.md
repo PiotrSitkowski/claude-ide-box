@@ -67,3 +67,22 @@ These are documented trade-offs, not vulnerabilities. Proposals to close them ar
   recommended settings; `doctor` warns without it.
 - **guard depends on the extension layout.** A new extension version is unguarded until the next
   wrapper start or `claude-ide-box guard`; `doctor` reports it.
+- **Session history is not visible in the IDE panel.** The extension lists past conversations from
+  `~/.claude/projects` on the host and reads them there directly, without asking the wrapper; they
+  live in the project's container volume. Resume them inside the box (`claude-ide-box shell`, then
+  `claude --resume`). Bind-mounting the project's transcript directory from the host into the
+  container was considered and rejected for now, because it would give the boxed process write
+  access to a host directory that unboxed tools read:
+  - a Claude Code started on the host in the same project (`claude --continue`, another IDE
+    profile) would load transcripts written in the box - prompt injection carried into an
+    unsandboxed session, with the host's tools and network;
+  - the host's `memory/` directory there is loaded into the context of host sessions; it would
+    have to be covered by a separate volume, and any other file Claude Code starts reading from
+    that directory in a later version would be a new channel;
+  - the extension on the host would read files the container controls: symlinks to host files,
+    FIFOs or very large files can hang or mislead it.
+  A narrower alternative under consideration: after a session, copy only regular `*.jsonl` files
+  with session-id names and a size limit from the volume to the host (never `memory/`, never
+  links), so the panel can list them; resuming from the panel still runs in the box. That removes
+  the file-system risks and keeps `memory/` out, but a host session that resumes a copied
+  transcript would still read text written in the box, so it would be opt-in.

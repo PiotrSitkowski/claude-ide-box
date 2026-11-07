@@ -3,6 +3,10 @@
 # Usage: tests/run-unit.sh [FILTER]   (FILTER is a substring of test names)
 set -euo pipefail
 
+# Tests run with a minimal PATH; remember node for the login filter test.
+TEST_NODE="$(command -v node 2>/dev/null || true)"
+export TEST_NODE
+
 TESTS_DIR="$(cd -P "$(dirname "$0")" && pwd -P)"
 REPO_DIR="$(dirname "$TESTS_DIR")"
 export TESTS_DIR REPO_DIR

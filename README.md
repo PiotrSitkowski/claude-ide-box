@@ -37,7 +37,7 @@ relying on it.
 
 - [How it works](#how-it-works)
 - [Threat model](#threat-model)
-- [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows with WSL2](#windows-with-wsl2)
+- [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows with WSL2](#windows-with-wsl2) · [separate IDE profile](#try-it-first-in-a-separate-ide-profile)
 - [Daily use](#daily-use)
 - [What runs in the box](#what-runs-in-the-box) - [dev servers](#dev-servers-react-vite-next-django-) · [office documents](#office-documents)
 - [Modules](#modules)
@@ -113,7 +113,9 @@ rest of your machine.
 > **Limits - stated plainly.**
 > - **Claude can modify every project file.** Anything the *host* later executes from the project
 >   runs outside the sandbox: `composer`/`npm` scripts, `Makefile`, `.envrc` (direnv), Husky hooks,
->   test suites, CI after you push. Review changes before running them on the host.
+>   test suites, CI after you push. Review changes before running them on the host. That includes
+>   Claude Code itself when it runs *outside* the box in the same project (another IDE profile, a
+>   terminal): it reads `CLAUDE.md` and `.claude/settings.json`, whose hooks run commands.
 > - **Every allowlisted domain is an exfiltration channel.** `api.anthropic.com` is unavoidable.
 >   The `github` preset in particular lets anything with a token push data out.
 > - **Conversation history lives in the container's volume**, not in your `~/.claude`. Removing it
@@ -132,6 +134,16 @@ rest of your machine.
 Prerequisites on every platform: Docker (Desktop or Engine), `git`, and the Claude Code extension
 in your IDE. A Claude subscription (Pro/Max) is the primary path; an API key works too.
 
+Docker is the boundary, so its version matters
+([Docker security announcements](https://docs.docker.com/security/security-announcements/)):
+
+| | Minimum | Why |
+|---|---|---|
+| Docker Desktop | **4.44.3** (4.97.0 or later recommended) | < 4.27.1: runc CVE-2024-21626, a container can reach the host file system. < 4.44.3: CVE-2025-9074, a container can reach the Docker Engine API and start containers without the socket being mounted. < 4.97.0: CVE-2026-99999, a container can corrupt the VM's network stack |
+| Docker Engine (Linux) | **25.0.2** (or 24.0.9 on the 24.0 line) | runc CVE-2024-21626 |
+
+`docker version` shows both (`Server: Docker Desktop 4.x` and `Engine: Version`).
+
 ```bash
 git clone https://github.com/PiotrSitkowski/claude-ide-box.git
 ```
@@ -144,6 +156,10 @@ cd claude-ide-box && ./install.sh
 `claude-ide-box-exec` into `~/.local/bin`, needs no root, and is safe to re-run. It prints the exact
 settings snippet for your machine.
 
+> [!TIP]
+> **Trying it out?** Start with [a separate IDE profile](#try-it-first-in-a-separate-ide-profile):
+> nothing changes for your usual profile until you decide.
+
 ### macOS
 
 The reference platform is macOS 15 on Intel with Docker Desktop (see the manual checklist in
@@ -151,11 +167,15 @@ The reference platform is macOS 15 on Intel with Docker Desktop (see the manual 
 
 1. Start Docker Desktop. The default file sharing (`/Users`, `/Volumes`, `/private`, `/tmp`)
    covers usual project locations.
-2. Install and build:
+2. Install, put `~/.local/bin` on your `PATH` (macOS does not by default; zsh is the default
+   shell), and build:
    ```bash
-   ./install.sh && claude-ide-box setup
+   ./install.sh
+   echo 'export PATH="$HOME/.local/bin:$PATH"' >>~/.zprofile && source ~/.zprofile
+   claude-ide-box setup
    ```
-3. Get a token (opens a URL you visit in your browser):
+3. Get a token (opens a URL you visit in your browser; the token is captured and stored
+   without being shown):
    ```bash
    claude-ide-box login
    ```
@@ -200,6 +220,33 @@ places (`/usr/local/bin`, `/opt/homebrew/bin`, `~/.docker/bin`, Docker.app) and 
 4. Put the wrapper setting in the Windows **user** settings
    (`%APPDATA%\Code\User\settings.json`) and, if your IDE applies machine settings remotely, in
    `~/.vscode-server/data/Machine/settings.json`. `claude-ide-box doctor` checks both.
+
+### Try it first in a separate IDE profile
+
+VS Code profiles (and Cursor's and Antigravity's) keep their own settings, so you can route Claude
+Code into the box in one profile and leave the others as they are:
+
+1. Install and run `setup` and `login` as above, then turn off automatic guarding:
+   ```bash
+   echo 'AUTO_GUARD=0' >>~/.config/claude-ide-box/config
+   ```
+   Do **not** run `claude-ide-box guard`. Guard replaces the binary bundled with the extension in
+   the IDE's shared extension directory, so it applies to every profile of every IDE at once -
+   which is what you want later, not while trying.
+2. In the IDE: `Profiles: New Profile...`, install the Claude Code extension in it, then
+   `Preferences: Open User Settings (JSON)` *in that profile* and add the three settings from step 4
+   above. They go to `User/profiles/<id>/settings.json`.
+3. `claude-ide-box doctor` checks profile settings too. Without guard it reports the unguarded
+   binaries and the other profiles as warnings, not failures.
+
+> [!WARNING]
+> **Do not open the same project in another profile and use Claude Code there.** That profile runs
+> `claude` on the host, and it would read what the boxed Claude may have written into the project:
+> `CLAUDE.md`, and `.claude/settings.json`, whose hooks run commands on your machine. Use test
+> projects while trying.
+
+When you are convinced: remove `AUTO_GUARD=0`, add the settings to your default profile (and other
+IDEs) and run `claude-ide-box guard && claude-ide-box doctor`.
 
 ## Daily use
 
@@ -409,6 +456,7 @@ auto-updater is disabled inside the container on purpose - versions change only 
 | `useTerminal is true` in `doctor` | terminal mode ignores the wrapper - set `"claudeCode.useTerminal": false` |
 | `masked path(s) were moved, replaced or deleted` | a masked file is not the same file (inode) it was when the container was created. Editors that save by writing a temp file and renaming it cause this too. If it was you, `claude-ide-box up --recreate`; if not, find out what moved it first |
 | `... cannot be mounted safely` | a file or directory that has to be masked or made read-only has a comma, quote, tab or newline in its name; rename it |
+| The panel's session history is empty; old conversations cannot be resumed from the panel | the extension lists sessions from `~/.claude/projects` on the host, but conversations live in the container's volume (by design, see [SECURITY.md](SECURITY.md#known-limitations)). Resume in a terminal inside the box: `claude-ide-box shell`, then `claude --resume` |
 | Files created by Claude are owned by another user | the images were built for another UID; run `claude-ide-box setup` as yourself. On Docker Desktop ownership is mapped to you regardless. |
 
 Set `CLAUDE_IDE_BOX_DEBUG=1` to mirror the wrapper log on stderr.

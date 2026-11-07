@@ -11,11 +11,14 @@ while [ -L "$self" ]; do
   link="$(readlink "$self")"
   case "$link" in
     /*) self="$link" ;;
-    *) self="$(dirname "$self")/$link" ;;
+    *) case "$self" in */*) self="${self%/*}/$link" ;; *) self="$link" ;; esac ;;
   esac
 done
-CB_BIN_DIR="$(cd -P "$(dirname "$self")" && pwd -P)"
-CB_ROOT="$(dirname "$CB_BIN_DIR")"
+# No basename/dirname: a path starting with "-" would be read as an option.
+case "$self" in */*) self_dir="${self%/*}" ;; *) self_dir=. ;; esac
+CB_BIN_DIR="$(cd -P "${self_dir:-/}" && pwd -P)"
+CB_ROOT="${CB_BIN_DIR%/*}"
+CB_ROOT="${CB_ROOT:-/}"
 CB_LIB="$CB_ROOT/lib/claude-ide-box"
 CB_WRAPPER="$CB_BIN_DIR/claude-ide-box-exec"
 if [ ! -f "$CB_LIB/common.sh" ]; then
@@ -390,18 +393,49 @@ cmd_login() {
   cb_require_docker
   cb_docker image inspect "$(cb_image_for_profile base)" >/dev/null 2>&1 || cb_die "run 'claude-ide-box setup' first"
   cb_container_uid
+  # The token is captured inside the container and written to a private
+  # directory mounted from the host, so it never appears on screen or in the
+  # terminal's scrollback. `script` gives `claude setup-token` the terminal it
+  # needs while its output goes through the filter; a very wide terminal keeps
+  # the token on one line.
+  local capture filter
+  capture="$(mktemp -d "${TMPDIR:-/tmp}/claude-ide-box-login.XXXXXX")" || cb_die "cannot create a temporary directory"
+  capture="${capture%/}"
+  case "$capture" in
+    *,* | *'"'* | *"$CB_NL"*) rm -rf "$capture"; cb_die "the temporary directory '$capture' cannot be mounted safely; set TMPDIR elsewhere" ;;
+  esac
+  chmod 700 "$capture"
+  filter="$(cat "$CB_LIB/login-filter.js")" || { rm -rf "$capture"; cb_die "missing $CB_LIB/login-filter.js"; }
   say "Starting 'claude setup-token' in a temporary container behind the proxy."
   say "Open the URL it prints in your browser, sign in, and paste the code back."
+  say "The token is captured directly; it is not shown and you do not need to copy it."
   say ""
-  cb_docker run -it --rm \
+  # shellcheck disable=SC2016 # $1 is expanded by the container's bash
+  if ! cb_docker run -it --rm \
     --network "$CB_NETWORK_INTERNAL" --dns 127.0.0.1 \
     --cap-drop ALL --security-opt no-new-privileges --read-only \
     --tmpfs /tmp:rw,size=64m --tmpfs "/home/claude:rw,size=64m,uid=$CB_UID,gid=$CB_GID" \
     --user "$CB_UID:$CB_GID" \
+    --mount "type=bind,src=$capture,dst=/run/claude-ide-box-login" \
     --env "HTTPS_PROXY=http://$CFG_PROXY_IP:3128" --env "https_proxy=http://$CFG_PROXY_IP:3128" \
     --env "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" \
-    "$(cb_image_for_profile base)" claude setup-token || cb_die "claude setup-token failed"
+    --entrypoint bash "$(cb_image_for_profile base)" -c \
+    'set -o pipefail; script -qfec "stty cols 4096 2>/dev/null; claude setup-token" /dev/null | node -e "$1" /run/claude-ide-box-login/token' \
+    _ "$filter"; then
+    rm -rf "$capture"
+    cb_die "claude setup-token failed"
+  fi
+  if [ -s "$capture/token" ]; then
+    token="$(cat "$capture/token")"
+    rm -rf "$capture"
+    say ""
+    cb_store_token "$token"
+    say "Token captured and stored in $CB_TOKEN_FILE (mode 600); it was not shown."
+    return 0
+  fi
+  rm -rf "$capture"
   say ""
+  say "The token could not be captured automatically (see above)."
   printf 'Paste the token printed above (input is hidden): '
   IFS= read -r -s token || true
   printf '\n'
@@ -637,7 +671,7 @@ cmd_profiles() {
   say "Image profiles (combine them: claude-ide-box profile python java):"
   for d in "$CB_CONFIG_DIR"/profiles/*/ "$CB_ROOT"/image/profiles/*/; do
     [ -f "$d/Dockerfile" ] || continue
-    name="$(basename "$d")"
+    name="$(cb_basename "$d")"
     case "$d" in
       "$CB_CONFIG_DIR"/*) src=user ;;
       *)
@@ -659,7 +693,7 @@ cmd_presets() {
   say "Proxy presets (claude-ide-box preset NAME on|off):"
   for f in "$CB_CONFIG_DIR"/presets/*.txt "$CB_ROOT"/proxy/presets/*.txt; do
     [ -f "$f" ] || continue
-    name="$(basename "$f" .txt)"
+    name="$(cb_basename "$f" .txt)"
     case "$f" in
       "$CB_CONFIG_DIR"/*) src=user ;;
       *) [ ! -f "$CB_CONFIG_DIR/presets/$name.txt" ] || continue; src=built-in ;;
@@ -694,13 +728,17 @@ check_fail() {
 
 # User settings.json files of every IDE we know, per OS (PLATFORM-NOTES).
 cb_settings_files() {
-  local app base
+  local app base p
   case "$(uname -s)" in
     Darwin) base="$HOME/Library/Application Support" ;;
     *) base="${XDG_CONFIG_HOME:-$HOME/.config}" ;;
   esac
   for app in "Antigravity" "Antigravity IDE" "Code" "Code - Insiders" "Cursor"; do
     printf '%s\n' "$base/$app/User/settings.json"
+    # IDE profiles (VS Code and its forks) keep their own settings.
+    for p in "$base/$app/User/profiles"/*/settings.json; do
+      [ -f "$p" ] && printf '%s\n' "$p"
+    done
     # WSL2: the IDE runs on Windows; its user settings live under %APPDATA%.
     if [ -d /mnt/c/Users ]; then
       local d
@@ -726,22 +764,41 @@ cb_settings_value() {
     tail -n 1 | sed -E 's/^[^:]*:[[:space:]]*//; s/^"//; s/"$//' || true
 }
 
+# doctor_wrapper_ok FILE - the file sets an installed claude-ide-box-exec.
+doctor_wrapper_ok() {
+  local wrapper resolved
+  wrapper="$(cb_settings_value "$1" claudeProcessWrapper)"
+  [ -n "$wrapper" ] || return 1
+  resolved="$(cb_resolve_path "$wrapper" 2>/dev/null || true)"
+  [ -n "$resolved" ] && [ -x "$resolved" ] && [ "$(cb_basename "$resolved")" = claude-ide-box-exec ]
+}
+
 doctor_settings() {
-  local f found=0 wrapper use_terminal resolved
+  local f found=0 configured=0 wrapper use_terminal files
+  files="$(cb_settings_files)"
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    ! doctor_wrapper_ok "$f" || configured=$((configured + 1))
+  done <<EOF
+$files
+EOF
   while IFS= read -r f; do
     [ -f "$f" ] || continue
     found=1
     wrapper="$(cb_settings_value "$f" claudeProcessWrapper)"
     use_terminal="$(cb_settings_value "$f" useTerminal)"
-    if [ -z "$wrapper" ]; then
+    if [ -z "$wrapper" ] && [ "$configured" -gt 0 ]; then
+      # Another IDE or profile uses the box; this one starts claude on the
+      # host (fine for a profile not used with Claude Code, or while trying
+      # Claude IDE Box in a separate profile).
+      check_warn "$f: claudeCode.claudeProcessWrapper is not set - Claude Code started from this IDE or profile runs on the host, outside the box"
+      continue
+    elif [ -z "$wrapper" ]; then
       check_fail "$f: claudeCode.claudeProcessWrapper is not set (add \"claudeCode.claudeProcessWrapper\": \"$CB_WRAPPER\")"
+    elif doctor_wrapper_ok "$f"; then
+      check_ok "$f: claudeProcessWrapper -> $wrapper"
     else
-      resolved="$(cb_resolve_path "$wrapper" 2>/dev/null || true)"
-      if [ -n "$resolved" ] && [ -x "$resolved" ] && [ "$(basename "$resolved")" = claude-ide-box-exec ]; then
-        check_ok "$f: claudeProcessWrapper -> $wrapper"
-      else
-        check_fail "$f: claudeProcessWrapper is '$wrapper', which is not an installed claude-ide-box-exec"
-      fi
+      check_fail "$f: claudeProcessWrapper is '$wrapper', which is not an installed claude-ide-box-exec"
     fi
     # Nested repositories created inside the container are writable until the
     # next start; the IDE's git integration runs `git status` in them (hooks,
@@ -754,7 +811,7 @@ doctor_settings() {
       check_fail "$f: claudeCode.useTerminal is true - terminal mode ignores claudeProcessWrapper; set it to false"
     fi
   done <<EOF
-$(cb_settings_files)
+$files
 EOF
   if [ "$found" = 0 ]; then
     check_warn "no IDE user settings.json found (Antigravity, VS Code, Cursor); nothing to check"
@@ -769,7 +826,7 @@ doctor_processes() {
     pid="${line%% *}"
     args="${line#* }"
     first="${args%% *}"
-    case "$(basename "$first")" in
+    case "$(cb_basename "$first")" in
       claude | claude.orig | claude.exe) hits="$hits $pid" ;;
     esac
   done <<EOF
@@ -845,6 +902,11 @@ $(cb_bundled_binaries)
 EOF
   if [ "$n" = 0 ]; then
     check_warn "no Claude Code extension found in the known extension directories"
+  elif [ -n "$bad" ] && [ "$CFG_AUTO_GUARD" = 0 ]; then
+    # A deliberate choice, e.g. while trying Claude IDE Box in one IDE
+    # profile: an extension that ignores the wrapper setting would run
+    # claude on the host.
+    check_warn "bundled extension binaries not guarded (AUTO_GUARD=0; 'claude-ide-box guard' protects every IDE profile):$bad"
   elif [ -n "$bad" ]; then
     check_fail "bundled extension binaries not guarded (claude-ide-box guard):$bad"
   else
