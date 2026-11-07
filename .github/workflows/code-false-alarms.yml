@@ -1,0 +1,41 @@
+name: False alarms in code
+
+# Findings in the source code of public packages (eval/code-corpus.json),
+# next to the masked share of the text corpus, for each NER backend.
+on:
+  push:
+    paths:
+      - "detector/pii_airgap/**"
+      - "eval/code_alarms.py"
+      - "eval/code_corpus.py"
+      - "eval/code-corpus.json"
+      - "image/Dockerfile"
+      - ".github/workflows/code-false-alarms.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        ner: [none, spacy, gliner]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space for the model
+        if: matrix.ner == 'gliner'
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+      - name: Build the image (NER=${{ matrix.ner }})
+        run: docker build -f image/Dockerfile --build-arg NER=${{ matrix.ner }} -t pii-airgap:${{ matrix.ner }} .
+      - name: Code corpus
+        run: python3 -c 'import sys; sys.path.insert(0, "eval"); import code_corpus; code_corpus.fetch("/tmp/code")'
+      - name: Numbers, inside the image, without network
+        run: |
+          # GLiNER is about 100 times slower: a fixed sample of every 4th file.
+          every=1; [ "${{ matrix.ner }}" = gliner ] && every=4
+          docker run --rm --network none --read-only --tmpfs /tmp -v "$PWD":/r:ro -v /tmp/code:/c:ro \
+            --entrypoint python3 pii-airgap:${{ matrix.ner }} -P /r/eval/code_alarms.py \
+            --ner "${{ matrix.ner }}" --code-cache /c --code-every "$every" | tee -a "$GITHUB_STEP_SUMMARY"
