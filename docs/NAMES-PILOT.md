@@ -45,8 +45,12 @@ line is an attribution (copyright, author, ...).
 | none | dict | 86.6 | 77.4 | 94.9 | 95.7 | 125 | 0.1 |
 | spaCy | - | 96.1 | 97.5 | 98.4 | 99.7 | 7289 | 1.9 |
 | spaCy | dict | 96.4 | 97.9 | 99.6 | 99.7 | 7363 | 2.0 |
-| GLiNER | - | *running* | | | | | |
-| GLiNER | dict | *running* | | | | | |
+| GLiNER | - | 98.5 | 99.0 | 100.0 | 100.0 | 581 * | 201.9 |
+| GLiNER | dict | 98.5 | 99.0 | 100.0 | 100.0 | 584 * | 202.3 |
+
+\* GLiNER is about 100 times slower, so in code it ran on a fixed sample: every 4th file (651 files).
+The spaCy and dictionary-only rows use all 2602 files. GLiNER was measured in CI only
+(huggingface.co is not reachable from the development sandbox).
 
 The spaCy rows were measured in the development sandbox and again in CI, with the same numbers.
 With Wikidata added, spaCy + dictionary reaches 98.2 % in English (+0.3) and 7375 false alarms.
@@ -58,3 +62,26 @@ and English names, which are all in the registries, so the dictionary rows are o
 names. The share of characters the layer adds on its own (64.2 -> 86.6 % in Polish) is real, but on
 top of a NER model the ceiling is close: spaCy already masks 98.4 % of Polish and 99.7 % of
 English person characters here.
+
+## Against the threshold
+
+The threshold set for widening the pilot to Europe, the USA and Russia was at least +1 percentage
+point of masked characters without a significant rise of false alarms in code.
+
+| On top of | PL | EN | False alarms in code |
+|---|---:|---:|---:|
+| spaCy | +0.3 | +0.4 (+0.7 with Wikidata) | +74 (+1.0 %) |
+| GLiNER | 0.0 | 0.0 | +3 (+0.5 %) |
+| no model | +22.4 | +23.5 | +125 (from 0) |
+
+**Below the threshold with either model.** On this corpus the models leave almost no person
+characters unmasked (spaCy 98.4 / 99.7 %, GLiNER 100 %), so the dictionary has little to add, and
+what it adds with spaCy stays under one point. It would matter only without a model (`NER=none`),
+where it lifts the masked share by more than 20 points at a cost of 125 false person findings in
+2602 code files - a configuration nobody is advised to use for names today. The recommendation is
+therefore not to extend the sources to other countries; the layer stays in the code, off by
+default, for a decision on whether to keep it for `NER=none` images.
+
+What the corpus cannot show: names that are rare, foreign to the model, or inflected in ways the
+synthetic templates do not use. A corpus of real documents would be the fairer test, and is the
+condition under which these numbers could change.
