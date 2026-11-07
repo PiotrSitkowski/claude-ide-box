@@ -9,9 +9,32 @@
 # NER=spacy   spaCy xx_ent_wiki_sm (default; needs github.com while building)
 # NER=none    checksums, patterns and user lists only
 ARG BASE_IMAGE=docker.io/library/ubuntu:24.04
+
+# Name dictionary (pilot, off by default): NAMES=dict stores the Polish
+# inflected forms from PoliMorf, NAMES=rules derives them from ending rules.
+# Built in its own stage, from the sources in names/sources.json, each
+# verified by checksum; only the SQLite file reaches the image.
+FROM ${BASE_IMAGE} AS names
+ARG NAMES=off
+# Wikidata query results cannot be checksummed; they are left out unless
+# NAMES_SKIP is set to something else (e.g. an empty string).
+ARG NAMES_SKIP=wikidata-*
+COPY names /build/names
+COPY detector/pii_airgap /build/pii_airgap
+RUN --mount=type=secret,id=build_ca,required=false \
+    mkdir -p /out \
+ && if [ "$NAMES" != off ]; then \
+      if [ -s /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi; \
+      apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
+      && PYTHONPATH=/build python3 -m pii_airgap.names_build --sources /build/names/sources.json \
+           --cache /tmp/names-src --out /out/names.db --download --forms "$NAMES" --skip "$NAMES_SKIP" \
+      && rm -rf /tmp/names-src; \
+    fi
+
 FROM ${BASE_IMAGE}
 
 ARG NER=spacy
+ARG NAMES=off
 ARG TORCH_VERSION=2.9.1
 ARG GLINER_MODEL=urchade/gliner_multi-v2.1
 # Commit of urchade/gliner_multi-v2.1 on huggingface.co (lastModified 2025-12-08); pinned so a
@@ -60,9 +83,10 @@ RUN --mount=type=secret,id=build_ca,required=false \
  && rm -rf /root/.cache
 
 COPY detector/pii_airgap /opt/pii-airgap/pii_airgap
+COPY --from=names /out/ /opt/pii-airgap/names/
 # The container runs with the caller's UID, which has no /etc/passwd entry;
 # USER and LOGNAME keep getpass.getuser() (used by torch) from failing.
-ENV PYTHONPATH=/opt/pii-airgap PII_AIRGAP_NER=${NER} HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+ENV PYTHONPATH=/opt/pii-airgap PII_AIRGAP_NER=${NER} PII_AIRGAP_NAMES=${NAMES} HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
     PYTHONDONTWRITEBYTECODE=1 PII_AIRGAP_OCR_LANGS=pol+eng+deu USER=pii-airgap LOGNAME=pii-airgap
 RUN chmod -R a+rX /opt/pii-airgap /opt/venv
 

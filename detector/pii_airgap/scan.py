@@ -53,6 +53,12 @@ def _cache_put(cache_dir, key, entry):
     os.replace(tmp, os.path.join(d, key + ".json"))
 
 
+# Source code: the name layer reads only its strings and comments.
+CODE_EXTENSIONS = (".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".kt", ".kts",
+                   ".scala", ".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".php", ".rb", ".swift", ".m", ".sh", ".bash",
+                   ".zsh", ".ps1", ".pl", ".lua", ".r", ".dart", ".ex", ".exs", ".erl", ".hs", ".sql", ".vue", ".svelte")
+
+
 def scan_file(path, detector, max_bytes=DEFAULT_MAX_BYTES):
     ex = extract_text(path, max_bytes=max_bytes)
     if ex is None:
@@ -64,7 +70,8 @@ def scan_file(path, detector, max_bytes=DEFAULT_MAX_BYTES):
         table = "\t"
     elif low.endswith(".csv"):
         table = sniff_delimiter(ex.text)
-    for f in detector.detect(ex.text, table=table):
+    code = table is None and low.endswith(CODE_EXTENSIONS)
+    for f in (detector.detect(ex.text, table=table, code=True) if code else detector.detect(ex.text, table=table)):
         findings.append({
             "type": f.type, "kind": f.kind, "source": f.source,
             "confidence": round(f.confidence, 3),

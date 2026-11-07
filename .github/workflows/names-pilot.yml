@@ -1,0 +1,56 @@
+name: Name dictionary pilot
+
+# Measures the name layer (pilot: Polish and English) with each NER backend.
+# Numbers only; the decision to turn the layer on is taken from them.
+on:
+  push:
+    paths:
+      - "names/**"
+      - "detector/pii_airgap/names*.py"
+      - "eval/names_pilot.py"
+      - "eval/code_corpus.py"
+      - "eval/code-corpus.json"
+      - "image/Dockerfile"
+      - ".github/workflows/names-pilot.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image without and with the dictionary (NER=none)
+        run: |
+          docker build -q -f image/Dockerfile --build-arg NER=none -t pii-airgap:none .
+          docker build -q -f image/Dockerfile --build-arg NER=none --build-arg NAMES=dict -t pii-airgap:none-names .
+          docker build -q -f image/Dockerfile --build-arg NER=none --build-arg NAMES=rules -t pii-airgap:none-names-rules .
+          docker image ls pii-airgap --format '{{.Tag}} {{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"
+          for t in none-names none-names-rules; do
+            docker run --rm --entrypoint sh pii-airgap:$t -c 'ls -l /opt/pii-airgap/names/names.db' | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        ner: [none, spacy, gliner]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space for the model
+        if: matrix.ner == 'gliner'
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc || true
+      - name: Build the image (NER=${{ matrix.ner }}, NAMES=dict)
+        run: docker build -f image/Dockerfile --build-arg NER=${{ matrix.ner }} --build-arg NAMES=dict -t pii-airgap:${{ matrix.ner }} .
+      - name: Code corpus
+        run: python3 -c 'import sys; sys.path.insert(0, "eval"); import code_corpus; code_corpus.fetch("/tmp/code")'
+      - name: Pilot numbers, inside the image, without network
+        run: |
+          every=1; [ "${{ matrix.ner }}" = gliner ] && every=4
+          docker run --rm --network none --read-only --tmpfs /tmp -v "$PWD":/r:ro -v /tmp/code:/c:ro \
+            -e PII_AIRGAP_NAMES=off --entrypoint python3 pii-airgap:${{ matrix.ner }} -P /r/eval/names_pilot.py \
+            --ner "${{ matrix.ner }}" --names none,/opt/pii-airgap/names/names.db --code-cache /c --code-every "$every" \
+            | tee -a "$GITHUB_STEP_SUMMARY"

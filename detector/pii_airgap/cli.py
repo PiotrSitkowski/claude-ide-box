@@ -44,6 +44,20 @@ def _die(msg, status=1):
     sys.exit(status)
 
 
+# Where an image built with NAMES=dict or NAMES=rules keeps its dictionary.
+BUNDLED_NAMES = "/opt/pii-airgap/names/names.db"
+
+
+def names_spec(arg, env):
+    """The name dictionary to use: --names, else $PII_AIRGAP_NAMES, else none.
+    "off" and "none" mean no dictionary; "dict" and "rules" (the image's
+    NAMES build argument) mean the one bundled in the image."""
+    spec = arg if arg is not None else env.get("PII_AIRGAP_NAMES", "none")
+    if spec in ("dict", "rules"):
+        return BUNDLED_NAMES
+    return "none" if spec in ("", "off", "none") else spec
+
+
 def _detector(args):
     entries = []
     for path in args.lists or []:
@@ -60,10 +74,19 @@ def _detector(args):
         ner = load_backend(spec)
     except Exception as e:  # noqa: any failure to load the model is fatal
         _die("cannot load the NER model (%s): %s" % (spec, e))
+
+    names = names_spec(getattr(args, "names", None), os.environ)
+    layer = None
+    if names != "none":
+        from .names import load_names
+        try:
+            layer = load_names(names)
+        except Exception as e:  # noqa: a configured dictionary that cannot be read is fatal
+            _die("cannot load the name dictionary %s: %s" % (names, e))
     if ner is None:
         sys.stderr.write("pii-airgap: warning: NER is off - names, organisations and places are only found "
-                         "through your lists\n")
-    return Detector(lists=entries, ner=ner), spec
+                         "through your lists%s\n" % (" and the name dictionary" if layer is not None else ""))
+    return Detector(lists=entries, ner=ner, names=layer), spec
 
 
 def _print_report(rep, min_conf):
@@ -175,6 +198,7 @@ def main(argv=None):
     def common(sp):
         sp.add_argument("--lists", action="append", help="list file: 'term' or 'TYPE: term' per line")
         sp.add_argument("--ner", help="gliner:<dir>, spacy:<name> or none (default: $PII_AIRGAP_NER)")
+        sp.add_argument("--names", help="name dictionary database, or off (default: $PII_AIRGAP_NAMES, off)")
 
     s = sub.add_parser("scan", help="report which files hold which kinds of PII")
     s.add_argument("root")

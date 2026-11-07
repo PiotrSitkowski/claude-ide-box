@@ -138,7 +138,7 @@ RULES = [
          r"Court|Ct\.|Way|Place|Square|Terrace)(?![\w])", confidence=0.85),
 ]
 
-_RANK = {"checksum": 3, "list": 3, "table": 3, "pattern": 2, "ner": 1}
+_RANK = {"checksum": 3, "list": 3, "table": 3, "pattern": 2, "ner": 1, "names": 0}
 
 # --------------------------------------------------------------------------
 # Tables: a column whose header names a person makes every cell a person.
@@ -324,7 +324,7 @@ def parse_list_file(content):
 
 
 class Detector(object):
-    def __init__(self, lists=(), ner=None, rules=None):
+    def __init__(self, lists=(), ner=None, rules=None, names=None):
         self.rules = RULES if rules is None else rules
         self.lists = []
         for t, term in lists:
@@ -333,6 +333,7 @@ class Detector(object):
             pat = r"(?<![\w])%s(?![\w])" % r"\s+".join(re.escape(w) for w in term.split())
             self.lists.append((t, term, re.compile(pat, re.I)))
         self.ner = ner
+        self.names = names
 
     def fingerprint(self):
         h = hashlib.sha256()
@@ -341,6 +342,8 @@ class Detector(object):
             h.update(("list:%s:%s\n" % (t, term)).encode())
         if self.ner is not None:
             h.update(("ner:%s\n" % getattr(self.ner, "fingerprint", getattr(self.ner, "__name__", "ner"))).encode())
+        if self.names is not None:
+            h.update(("names:%s\n" % self.names.fingerprint).encode())
         return h.hexdigest()
 
     def _context(self, rule, text, start):
@@ -352,7 +355,7 @@ class Detector(object):
     def _validate(self, rule, s):
         return rule.validator is None or rule.validator(s)
 
-    def _candidates(self, text, table=None):
+    def _candidates(self, text, table=None, code=False):
         for rule in self.rules:
             for m in rule.regex.finditer(text):
                 start, end = m.start(), m.end()
@@ -388,6 +391,9 @@ class Detector(object):
         if tables:
             for f in table_findings(text, tables):
                 yield f
+        if self.names is not None:
+            for f in self.names(text, code=code):
+                yield f
 
     def _model_findings(self, text, headers):
         """The model's findings, cut at line breaks (a name or place does not
@@ -418,10 +424,12 @@ class Detector(object):
         lowered = word[0].lower() + text[f.start + 1:stop]
         return not any(g.type == "LOCATION" and g.start < len(word) for g in self.ner(lowered))
 
-    def detect(self, text, table=None):
+    def detect(self, text, table=None, code=False):
         """Findings in TEXT. TABLE is the delimiter when the whole text is a
-        delimited table (CSV, TSV); Markdown tables are found in any text."""
-        cands = sorted(self._candidates(text, table),
+        delimited table (CSV, TSV); Markdown tables are found in any text.
+        CODE marks source code, where the name layer reads only strings and
+        comments."""
+        cands = sorted(self._candidates(text, table, code),
                        key=lambda f: (-_RANK.get(f.source, 0), -f.confidence, -(f.end - f.start), f.start))
         taken = []
         for f in cands:

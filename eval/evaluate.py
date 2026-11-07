@@ -20,6 +20,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from pii_airgap.detect import Detector  # noqa: E402
 from pii_airgap.ner import load_backend  # noqa: E402
 
+try:
+    from pii_airgap.names import load_names  # noqa: E402
+except ImportError:  # detector without the name layer
+    load_names = None
+
 # Table-aware detection (headers naming a person column) where supported.
 _TABLES = "table" in inspect.signature(Detector.detect).parameters
 
@@ -27,6 +32,7 @@ _TABLES = "table" in inspect.signature(Detector.detect).parameters
 def score(docs, detector):
     tp, fp, fn = defaultdict(int), defaultdict(int), defaultdict(int)
     chars = defaultdict(lambda: [0, 0])  # lang -> [covered, total]
+    person_chars = defaultdict(lambda: [0, 0])  # the same for PERSON values only
     per_lang = defaultdict(lambda: [0, 0, 0])
     elapsed = 0.0
     for d in docs:
@@ -53,10 +59,14 @@ def score(docs, detector):
             covered = sum(1 for c in range(g["start"], g["end"]) if any(p.start <= c < p.end for p in preds))
             chars[d["lang"]][0] += covered
             chars[d["lang"]][1] += g["end"] - g["start"]
+            if g["type"] == "PERSON":
+                person_chars[d["lang"]][0] += covered
+                person_chars[d["lang"]][1] += g["end"] - g["start"]
         for i, p in enumerate(preds):
             if i not in used:
                 fp[p.type] += 1
                 per_lang[d["lang"]][1] += 1
+    score.person_chars = person_chars
     return tp, fp, fn, chars, per_lang, elapsed
 
 
@@ -101,14 +111,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "corpus.jsonl"))
     ap.add_argument("--ner", default="none")
+    ap.add_argument("--names", default="none", help="name dictionary database (default: none)")
     args = ap.parse_args()
     with open(args.corpus, encoding="utf-8") as f:
         docs = [json.loads(line) for line in f if line.strip()]
-    det = Detector(ner=load_backend(args.ner))
+    if args.names != "none":
+        det = Detector(ner=load_backend(args.ner), names=load_names(args.names))
+    else:
+        det = Detector(ner=load_backend(args.ner))
     tp, fp, fn, chars, per_lang, elapsed = score(docs, det)
-    print("Corpus: %d documents (%s), NER: %s, %.1f ms per document\n"
+    print("Corpus: %d documents (%s), NER: %s%s, %.1f ms per document\n"
           % (len(docs), ", ".join("%s %d" % (l, sum(1 for d in docs if d["lang"] == l)) for l in ("pl", "en", "de")),
-             args.ner, 1000.0 * elapsed / max(1, len(docs))))
+             args.ner, "" if args.names == "none" else ", names: " + os.path.basename(args.names),
+             1000.0 * elapsed / max(1, len(docs))))
     print("| Type | Gold | Found | False positives | Precision % | Recall % |")
     print("|---|---:|---:|---:|---:|---:|")
     for t in sorted(set(tp) | set(fp) | set(fn)):
@@ -119,6 +134,10 @@ def main():
     for lang in ("pl", "en", "de"):
         a, b, c = per_lang[lang]
         print("| %s | %s | %s | %s |" % (lang, pct(a, a + b), pct(a, a + c), pct(chars[lang][0], chars[lang][1])))
+    if args.names != "none":
+        pc = score.person_chars
+        print("\nMasked characters of PERSON values: %s" % ", ".join(
+            "%s %s %%" % (lang, pct(pc[lang][0], pc[lang][1])) for lang in ("pl", "en", "de")))
     rows, totals = field_report(docs, det)
     if rows:
         print("\nField cases (from the end-to-end test): %d values fully masked, %d partly, %d missed; "

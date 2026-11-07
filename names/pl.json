@@ -1,0 +1,22 @@
+{
+  "lang": "pl",
+  "description": "Rules for Polish names, written for pii-airgap (not taken from any dictionary).",
+  "min_given_per_million": 2.6,
+  "min_surname_per_million": 1.3,
+  "titles": ["pan", "pani", "pana", "panu", "panem", "panią", "panie", "panowie", "państwo", "dr", "doktor", "doktora",
+             "prof", "profesor", "profesora", "mgr", "inż", "mec", "mecenas", "sędzia", "adw", "adwokat", "radca",
+             "ks", "ksiądz", "siostra", "brat"],
+  "stop_neighbours": ["w", "we", "z", "ze", "i", "a", "o", "u", "na", "do", "od", "po", "przy", "dla", "bez", "nad",
+                      "pod", "przed", "za", "oraz", "lub", "albo", "ale", "jak", "to", "ten", "ta", "te", "tego", "się",
+                      "nie", "tak", "jest", "był", "była", "było", "są", "ul", "al", "pl", "os", "sp", "zł", "nr",
+                      "tel", "dnia", "roku", "rok", "pkt", "art", "ust", "par", "str", "itd", "itp", "np", "tj"],
+  "surname_endings": ["ski", "ska", "cki", "cka", "dzki", "dzka", "wicz", "owicz", "ewicz", "czyk", "czak", "iak",
+                      "ówna", "anka", "uk", "yk"],
+  "inflection": [["skiego", "ski"], ["skiemu", "ski"], ["skim", "ski"], ["skich", "ski"], ["ską", "ska"],
+                 ["skiej", "ska"], ["ckiego", "cki"], ["ckiemu", "cki"], ["ckim", "cki"], ["cką", "cka"],
+                 ["ckiej", "cka"], ["dzkiego", "dzki"], ["dzkim", "dzki"], ["dzką", "dzka"], ["dzkiej", "dzka"],
+                 ["owiczem", "owicz"], ["owiczowi", "owicz"], ["owicza", "owicz"], ["ewiczem", "ewicz"],
+                 ["ewicza", "ewicz"], ["owi", ""], ["iem", ""], ["em", ""], ["a", ""], ["u", ""],
+                 ["ą", "a"], ["ę", "a"], ["y", "a"], ["i", "a"], ["ie", "a"], ["ce", "ka"], ["dze", "ga"]],
+  "common_given": []
+}

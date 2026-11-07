@@ -1,0 +1,104 @@
+{
+ "description": "False-alarm corpus for the name layer: source code of public packages, fetched from package registries at pinned versions and checked against these checksums. Not stored in git. Only source files are read (extensions below); findings of PERSON on attribution lines (copyright, author, ...) are counted apart, as they may be real names.",
+ "extensions": [
+  ".py",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".go",
+  ".rs"
+ ],
+ "packages": [
+  {
+   "id": "pypi-requests-2.32.3",
+   "lang": "python",
+   "url": "https://files.pythonhosted.org/packages/63/70/2bf7780ad2d390a8d301ad0b550f1581eadbd9a20f896afe06353c2a2913/requests-2.32.3.tar.gz",
+   "file": "pypi-requests-2.32.3.tar.gz",
+   "sha256": "55365417734eb18255590a9ff9eb97e9e1da868d4ccd6402399eaf68af20a760",
+   "licence": "Apache-2.0",
+   "licence_checked": "2026-11-07",
+   "format": "tar.gz"
+  },
+  {
+   "id": "pypi-flask-3.0.3",
+   "lang": "python",
+   "url": "https://files.pythonhosted.org/packages/41/e1/d104c83026f8d35dfd2c261df7d64738341067526406b40190bc063e829a/flask-3.0.3.tar.gz",
+   "file": "pypi-flask-3.0.3.tar.gz",
+   "sha256": "ceb27b0af3823ea2737928a4d99d125a06175b8512c445cbd9a9ce200ef76842",
+   "licence": "BSD-3-Clause",
+   "licence_checked": "2026-11-07",
+   "format": "tar.gz"
+  },
+  {
+   "id": "npm-express-4.21.1",
+   "lang": "javascript/typescript",
+   "url": "https://registry.npmjs.org/express/-/express-4.21.1.tgz",
+   "file": "npm-express-4.21.1.tgz",
+   "sha256": "4097da0999b7078263460df02b0990244794d84e79e185e6d4ff50ce06d79462",
+   "licence": "MIT",
+   "licence_checked": "2026-11-07",
+   "format": "tgz"
+  },
+  {
+   "id": "npm-lodash-4.17.21",
+   "lang": "javascript/typescript",
+   "url": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
+   "file": "npm-lodash-4.17.21.tgz",
+   "sha256": "6a087ac9e5702a0c9d60fbcd48696012646ec8df1491dea472b150e79fcaf804",
+   "licence": "MIT",
+   "licence_checked": "2026-11-07",
+   "format": "tgz"
+  },
+  {
+   "id": "npm-rxjs-7.8.1",
+   "lang": "javascript/typescript",
+   "url": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.1.tgz",
+   "file": "npm-rxjs-7.8.1.tgz",
+   "sha256": "c532167725ab7d085123209156c93cef22f2479cb9c8527060f1cd903aa9d149",
+   "licence": "Apache-2.0",
+   "licence_checked": "2026-11-07",
+   "format": "tgz"
+  },
+  {
+   "id": "go-cobra-v1.8.1",
+   "lang": "go",
+   "url": "https://proxy.golang.org/github.com/spf13/cobra/@v/v1.8.1.zip",
+   "file": "go-cobra-v1.8.1.zip",
+   "sha256": "bf27a276f87257c93bc057309df30265a19beefc3d5fc887cbd8fc99ad35466a",
+   "licence": "Apache-2.0",
+   "licence_checked": "2026-11-07",
+   "format": "zip"
+  },
+  {
+   "id": "go-gin-v1.10.0",
+   "lang": "go",
+   "url": "https://proxy.golang.org/github.com/gin-gonic/gin/@v/v1.10.0.zip",
+   "file": "go-gin-v1.10.0.zip",
+   "sha256": "c983efe780ee7c250a287eb26f228e0f7b77667c5ff9f4448cd54f05d28f5e70",
+   "licence": "MIT",
+   "licence_checked": "2026-11-07",
+   "format": "zip"
+  },
+  {
+   "id": "crate-regex-1.11.1",
+   "lang": "rust",
+   "url": "https://static.crates.io/crates/regex/regex-1.11.1.crate",
+   "file": "crate-regex-1.11.1.tar.gz",
+   "sha256": "b544ef1b4eac5dc2db33ea63606ae9ffcfac26c1416a2806ae0bf5f56b201191",
+   "licence": "MIT OR Apache-2.0",
+   "licence_checked": "2026-11-07",
+   "format": "tar.gz"
+  },
+  {
+   "id": "crate-serde-1.0.210",
+   "lang": "rust",
+   "url": "https://static.crates.io/crates/serde/serde-1.0.210.crate",
+   "file": "crate-serde-1.0.210.tar.gz",
+   "sha256": "c8e3592472072e6e22e0a54d5904d9febf8508f65fb8552499a1abc7d1078c3a",
+   "licence": "MIT OR Apache-2.0",
+   "licence_checked": "2026-11-07",
+   "format": "tar.gz"
+  }
+ ]
+}
