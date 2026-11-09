@@ -277,6 +277,20 @@ class TreeTests(unittest.TestCase):
         write(os.path.join(self.root, "x.txt"), "1440514013590 Jan Kowalskiego\n")
         self.assertEqual(verify_tree(self.root, self.map), [])
 
+    def test_verify_ignores_a_value_inside_a_token(self):
+        # From the first test on Windows: NER took the label "NIP" for an
+        # organisation, so a fresh copy holding "[ORG_1] [NIP_1]" was refused.
+        m = TokenMap()
+        m.token_for("ORG", "NIP")
+        m.token_for("NIP", "5260250274")
+        path = os.path.join(self.tmp.name, "nip.map.json")
+        m.save(path)
+        root = os.path.join(self.tmp.name, "nipcopy")
+        write(os.path.join(root, "a.txt"), "[ORG_1] [NIP_1], [NIP_1]\n")
+        self.assertEqual(verify_tree(root, path), [])
+        write(os.path.join(root, "b.txt"), "NIP [NIP_1]\n")
+        self.assertEqual(verify_tree(root, path), [("b.txt", 1)])
+
     def test_verify_does_not_follow_symlinks(self):
         os.unlink(os.path.join(self.root, "bin.dat"))
         anonymise_tree(self.root, self.map, self.d, git="strip")

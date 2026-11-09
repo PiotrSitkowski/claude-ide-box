@@ -18,6 +18,7 @@ from .code import syntax_for
 from .detect import sniff_delimiter
 
 STRICT = re.compile(r"\[([A-Z]+)_([0-9]+)\]")
+STRICT_BYTES = re.compile(rb"\[[A-Z]+_[0-9]+\]")
 MAP_FORMAT = "pii-airgap-map/1"
 LINK_TYPES = ("ner",)  # sources that do not block on file names
 
@@ -440,7 +441,9 @@ def verify_tree(root, map_path):
             p = os.path.join(dirpath, n)
             if not stat.S_ISREG(os.lstat(p).st_mode):
                 continue
-            hits = len(rx.findall(_read_bytes(p)))
+            # Tokens are not values: a value that equals a type name ("NIP"
+            # taken for an organisation) must not match inside "[NIP_1]".
+            hits = len(rx.findall(STRICT_BYTES.sub(b" ", _read_bytes(p))))
             if hits:
                 found.append((os.path.relpath(p, root).replace(os.sep, "/"), hits))
     return sorted(found)
