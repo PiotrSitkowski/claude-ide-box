@@ -66,6 +66,12 @@ whose target names the holder's pid, created by one `ln -s`, so a live lock alwa
 Whether that pause was CI's cause is not confirmed; the parallel test now prints the wrapper log
 (process ids, lock messages, container creation) when it fails.
 
+Tests that took the first line of a pipeline with `head` inside a command substitution could
+end early on their own: when `head` leaves while `grep` is still writing, `grep` dies of SIGPIPE
+(status 141) and `pipefail` with `set -e` stops the test without a message - seen in the
+`bash:3.2` CI job for another test of this kind (4 of 120 runs there, 0 of 300 with `sed -n 1p`).
+The tests here use `sed -n 1p`, which reads all of its input.
+
 The check of pseudonymised copies came from a manual test in which a copy restored in place was
 opened again and Claude sent a contract with a PESEL to the API. Its tests were red first: 9 of the
 first 11 failed (no record and an unrelated record pass without the feature), the `restore --out`

@@ -66,8 +66,8 @@ test_stopped_proxy_is_started_before_the_session() {
   local c start_line exec_line
   c="$(cat "$FAKE_DOCKER_DIR/calls")"
   assert_contains "$c" "start claude-ide-box-proxy"
-  start_line="$(grep -n '^start claude-ide-box-proxy' "$FAKE_DOCKER_DIR/calls" | head -1 | cut -d: -f1)"
-  exec_line="$(grep -n '^exec ' "$FAKE_DOCKER_DIR/calls" | head -1 | cut -d: -f1)"
+  start_line="$(grep -n '^start claude-ide-box-proxy' "$FAKE_DOCKER_DIR/calls" | sed -n 1p | cut -d: -f1)"
+  exec_line="$(grep -n '^exec ' "$FAKE_DOCKER_DIR/calls" | sed -n 1p | cut -d: -f1)"
   if [ -z "$start_line" ] || [ -z "$exec_line" ] || [ "$start_line" -ge "$exec_line" ]; then
     fail "the proxy must be started before the session (start at line $start_line, exec at $exec_line)"
   fi
@@ -700,6 +700,6 @@ EOS
   assert_eq 1 "$creators" "the container must be created once; wrapper log:
 $log"
   local first
-  first="$(grep 'creating container' "$HOME/.local/state/claude-ide-box/wrapper.log" | head -n 1 | sed 's/^[^[]*\[\([0-9]*\)\].*/\1/')"
+  first="$(grep 'creating container' "$HOME/.local/state/claude-ide-box/wrapper.log" | sed -n 1p | sed 's/^[^[]*\[\([0-9]*\)\].*/\1/')"
   assert_eq "$holder" "$first" "the waiter created the container while the paused holder held the lock"
 }
