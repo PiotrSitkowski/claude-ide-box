@@ -1238,6 +1238,6 @@ cb_env_passthrough() {
 # shellcheck source=lib/claude-ide-box/engine.sh
 . "${CB_LIB:-${BASH_SOURCE[0]%/*}}/engine.sh"
 # shellcheck source=lib/claude-ide-box/deps.sh
-. "$CB_LIB/deps.sh"
+. "${CB_LIB:-${BASH_SOURCE[0]%/*}}/deps.sh"
 # shellcheck source=lib/claude-ide-box/secrets.sh
-. "$CB_LIB/secrets.sh"
+. "${CB_LIB:-${BASH_SOURCE[0]%/*}}/secrets.sh"
