@@ -22,7 +22,7 @@
     Id = 'pii'
     SizeMB = 1360
     Repo = 'https://github.com/PiotrSitkowski/pii-airgap'
-    Commit = '621a18ad79aebfd52d1fb6117767fd4680200bd1'
+    Commit = '5ffdc57e2a08313801f1bb83af54c4174a649f20'
   }
 
   Dev = @(
