@@ -632,6 +632,7 @@ Recommended for any project that holds personal data; see
 - [`docs/DESIGN.md`](docs/DESIGN.md) - design specification
 - [`docs/PLATFORM-NOTES.md`](docs/PLATFORM-NOTES.md) - facts measured on real hosts and in the extension
 - [`docs/NON-DEVELOPERS.md`](docs/NON-DEVELOPERS.md) - document work and the roadmap for Claude Desktop users
+- [`CHANGELOG.md`](CHANGELOG.md) - what each release contains, supported platforms
 - [`TESTING.md`](TESTING.md) - what is verified automatically and what needs a manual check
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - conventions (bash 3.2, fail closed, security invariants)
 - [`SECURITY.md`](SECURITY.md) - reporting a sandbox escape
