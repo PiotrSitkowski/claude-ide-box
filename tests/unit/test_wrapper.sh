@@ -58,6 +58,45 @@ test_stdout_clean_when_container_already_exists_but_stopped() {
   assert_contains "$(cat "$FAKE_DOCKER_DIR/calls")" "start "
 }
 
+test_stopped_proxy_is_started_before_the_session() {
+  echo "false" >"$FAKE_DOCKER_DIR/proxy-state"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_eq "FAKE-STDOUT" "$OUT"
+  local c start_line exec_line
+  c="$(cat "$FAKE_DOCKER_DIR/calls")"
+  assert_contains "$c" "start claude-ide-box-proxy"
+  start_line="$(grep -n '^start claude-ide-box-proxy' "$FAKE_DOCKER_DIR/calls" | head -1 | cut -d: -f1)"
+  exec_line="$(grep -n '^exec ' "$FAKE_DOCKER_DIR/calls" | head -1 | cut -d: -f1)"
+  if [ -z "$start_line" ] || [ -z "$exec_line" ] || [ "$start_line" -ge "$exec_line" ]; then
+    fail "the proxy must be started before the session (start at line $start_line, exec at $exec_line)"
+  fi
+}
+
+test_running_proxy_is_left_alone() {
+  echo "true" >"$FAKE_DOCKER_DIR/proxy-state"
+  run_wrapper --version
+  assert_status 0 "$STATUS"
+  assert_not_contains "$(cat "$FAKE_DOCKER_DIR/calls")" "start claude-ide-box-proxy"
+}
+
+test_proxy_that_cannot_start_stops_the_session() {
+  echo "false" >"$FAKE_DOCKER_DIR/proxy-state"
+  FAKE_PROXY_START_FAILS=1 run_wrapper --version
+  assert_status 1 "$STATUS"
+  assert_contains "$ERR" "cannot be started"
+  assert_eq "" "$OUT"
+  [ ! -f "$FAKE_DOCKER_DIR/exec.args" ] || fail "no session may start without the proxy"
+}
+
+test_proxy_that_stops_right_after_start_stops_the_session() {
+  echo "false" >"$FAKE_DOCKER_DIR/proxy-state"
+  FAKE_PROXY_AFTER_START=false run_wrapper --version
+  assert_status 1 "$STATUS"
+  assert_contains "$ERR" "stopped right after"
+  [ ! -f "$FAKE_DOCKER_DIR/exec.args" ] || fail "no session may start without the proxy"
+}
+
 test_exit_status_is_passed_through() {
   FAKE_EXEC_STATUS=7 run_wrapper --version
   assert_status 7 "$STATUS"
