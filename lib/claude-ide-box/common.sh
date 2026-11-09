@@ -300,7 +300,7 @@ CB_CONFIG_KEYS="SUBNET PROXY_IP UPSTREAM_PROXY PROXY_PRESETS PROFILE BUILD_PROFI
 CLAUDE_CODE_VERSION BASE_IMAGE PROXY_BASE_IMAGE BUILD_NETWORK MEMORY CPUS PIDS_LIMIT
 TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS READONLY_DEFAULTS READONLY GIT_WRITABLE
 NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS AUTO_GUARD CONTAINER_UID CONTAINER_GID
-EXTENSION_DIRS"
+EXTENSION_DIRS OCR_LANGUAGES"
 
 # Keys a per-project file may override. Network and build settings are global.
 CB_PROJECT_KEYS="PROFILE MEMORY CPUS PIDS_LIMIT TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS
@@ -319,6 +319,8 @@ cb_config_defaults() {
   CFG_BUILD_NETWORK=""
   CFG_MEMORY="4g"
   CFG_CPUS="2"
+  # Tesseract languages of the `ocr` profile (global: one image for all projects).
+  CFG_OCR_LANGUAGES="eng"
   CFG_PIDS_LIMIT="512"
   CFG_TMP_SIZE="1g"
   CFG_MASK_DEFAULTS=".env .env.*"
@@ -395,6 +397,9 @@ cb_validate_config() {
   esac
   case "$CFG_PROFILE" in
     *[!a-z0-9_,\ -]*) cb_die "invalid PROFILE '$CFG_PROFILE' (profile names, separated by spaces or commas)" ;;
+  esac
+  case "$CFG_OCR_LANGUAGES" in
+    "" | *[!a-z_\ ]*) cb_die "invalid OCR_LANGUAGES '$CFG_OCR_LANGUAGES' (Tesseract codes separated by spaces, e.g. 'eng deu chi_sim')" ;;
   esac
   case "$CFG_PIDS_LIMIT" in
     *[!0-9]* | "") cb_die "invalid PIDS_LIMIT '$CFG_PIDS_LIMIT'" ;;

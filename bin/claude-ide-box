@@ -266,7 +266,14 @@ cb_build_profiles() {
       *" $tag "*) ;;
       *)
         dir="$(cb_profile_dir "$p")"
-        cb_build "$tag" "$dir" --build-arg "BASE_IMAGE=$prev"
+        # Settings reach only the profiles that declare them (no "unused
+        # build-arg" noise for the others).
+        local -a args
+        args=(--build-arg "BASE_IMAGE=$prev")
+        if grep -q '^ARG OCR_LANGUAGES' "$dir/Dockerfile"; then
+          args+=(--build-arg "OCR_LANGUAGES=$CFG_OCR_LANGUAGES")
+        fi
+        cb_build "$tag" "$dir" "${args[@]}"
         cb_check_profile_home "$tag" "$p"
         CB_BUILT="$CB_BUILT$tag "
         ;;

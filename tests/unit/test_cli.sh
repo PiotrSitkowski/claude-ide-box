@@ -457,6 +457,42 @@ test_setup_builds_a_profile_chain() {
   assert_contains "$c" "$HOME/.config/claude-ide-box/profiles/mytool"
 }
 
+test_office_modules_are_listed() {
+  run_cli profiles
+  assert_status 0 "$STATUS" "$ERR"
+  assert_contains "$OUT" "docs"
+  assert_contains "$OUT" "libreoffice"
+  assert_contains "$OUT" "ocr"
+  assert_contains "$OUT" "office"
+}
+
+test_setup_passes_ocr_languages_only_to_the_ocr_profile() {
+  mkdir -p "$HOME/.config/claude-ide-box"
+  printf 'OCR_LANGUAGES=eng deu chi_sim\n' >>"$HOME/.config/claude-ide-box/config"
+  run_cli setup --profile docs,ocr
+  assert_status 0 "$STATUS" "$ERR"
+  local docs ocr
+  docs="$(grep -- '-t claude-ide-box/env:docs ' "$FAKE_DOCKER_DIR/calls")"
+  ocr="$(grep -- '-t claude-ide-box/env:docs.ocr ' "$FAKE_DOCKER_DIR/calls")"
+  assert_not_contains "$docs" "OCR_LANGUAGES"
+  assert_contains "$ocr" 'OCR_LANGUAGES=eng\ deu\ chi_sim'
+}
+
+test_ocr_languages_default_to_english() {
+  run_cli setup --profile ocr
+  assert_status 0 "$STATUS" "$ERR"
+  assert_contains "$(grep -- '-t claude-ide-box/env:ocr ' "$FAKE_DOCKER_DIR/calls")" "OCR_LANGUAGES=eng "
+}
+
+test_invalid_ocr_languages_fail_closed() {
+  mkdir -p "$HOME/.config/claude-ide-box"
+  printf 'OCR_LANGUAGES=eng;touch /tmp/x\n' >>"$HOME/.config/claude-ide-box/config"
+  run_cli setup --profile ocr
+  assert_nonzero "$STATUS"
+  assert_contains "$ERR" "OCR_LANGUAGES"
+  assert_not_contains "$(cat "$FAKE_DOCKER_DIR/calls" 2>/dev/null)" " build "
+}
+
 test_setup_rejects_a_profile_that_leaves_root_files_in_home() {
   user_profile mytool
   FAKE_HOME_FOREIGN="/home/claude/.config" run_cli setup --profile mytool
