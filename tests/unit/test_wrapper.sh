@@ -383,15 +383,17 @@ test_parallel_starts_create_container_once() {
   wait
   local n
   n="$(grep -c '^run ' "$FAKE_DOCKER_DIR/calls" || true)"
-  assert_eq 1 "$n" "docker run must happen exactly once"
+  # On failure, show which wrapper process did what (pid in brackets).
+  assert_eq 1 "$n" "docker run must happen exactly once; wrapper log:
+$(grep -E 'lock|creating container|recreating|changed' "$HOME/.local/state/claude-ide-box/wrapper.log" 2>/dev/null || true)"
 }
 
 test_stale_lock_is_removed() {
   local lockdir="$HOME/.local/state/claude-ide-box/locks"
   local name
   name="claude-ide-box-my-project-$(sha8 "$PROJECT")"
-  mkdir -p "$lockdir/$name.lock"
-  echo 999999 >"$lockdir/$name.lock/pid"
+  mkdir -p "$lockdir"
+  ln -s "pid:999999" "$lockdir/$name.lck"
   run_wrapper --version
   assert_status 0 "$STATUS"
 }
@@ -614,27 +616,18 @@ test_mask_record_message_is_readable() {
   assert_not_contains "$ERR" "from inside the container to escape a mask from inside"
 }
 
-test_live_lock_is_not_broken_while_its_pid_file_flickers() {
-  # A live holder whose pid file is briefly missing (the instant between
-  # mkdir and writing the pid, as for every new holder) must not be taken
-  # for a dead one, however long the waiter has already been waiting.
+test_live_lock_is_respected_until_released() {
+  # A waiter must wait for a live holder, however long it holds the lock.
   local lockdir="$HOME/.local/state/claude-ide-box/locks"
   local name lock
   name="claude-ide-box-my-project-$(sha8 "$PROJECT")"
-  lock="$lockdir/$name.lock"
-  mkdir -p "$lock"
+  lock="$lockdir/$name.lck"
+  mkdir -p "$lockdir"
   (
-    # The cycle is not a multiple of the waiter's 0.2 s poll, so the waiter
-    # sees the pid file missing every few polls.
-    end=$(( $(date +%s) + 9 ))
-    while [ "$(date +%s)" -lt "$end" ]; do
-      echo "$$" >"$lock/pid"
-      sleep 0.11
-      rm -f "$lock/pid"
-      sleep 0.06
-    done
+    ln -s "pid:$(sh -c 'echo $PPID')" "$lock"
+    sleep 7
     echo "RELEASED" >>"$FAKE_DOCKER_DIR/calls"
-    rm -rf "$lock"
+    rm -f "$lock"
   ) &
   local holder=$!
   sleep 0.2
@@ -644,18 +637,17 @@ test_live_lock_is_not_broken_while_its_pid_file_flickers() {
   local order
   order="$(grep -n -E '^(RELEASED|run )' "$FAKE_DOCKER_DIR/calls" | cut -d: -f2 | awk '{print $1}' | tr '\n' ' ')"
   assert_eq "RELEASED run " "$order" "the container was created while another process held the lock"
-  assert_not_contains "$(cat "$HOME/.local/state/claude-ide-box/wrapper.log")" "without a pid file"
+  assert_not_contains "$(cat "$HOME/.local/state/claude-ide-box/wrapper.log")" "removing stale lock"
 }
 
-test_abandoned_lock_without_pid_is_reaped() {
-  # A holder that died between mkdir and writing its pid leaves an empty
-  # lock directory; the next start must not wait for it forever.
+test_lock_directory_of_an_older_version_does_not_block() {
+  # Older versions locked with a directory; one left behind is not a lock.
   local name
   name="claude-ide-box-my-project-$(sha8 "$PROJECT")"
   mkdir -p "$HOME/.local/state/claude-ide-box/locks/$name.lock"
   run_wrapper --version
   assert_status 0 "$STATUS"
-  assert_contains "$(cat "$HOME/.local/state/claude-ide-box/wrapper.log")" "without a pid file"
+  assert_eq 1 "$(grep -c '^run ' "$FAKE_DOCKER_DIR/calls" || true)"
 }
 
 test_inode_probe_survives_a_path_that_vanishes() {
@@ -673,4 +665,41 @@ EOS
     "$REPO_DIR/lib/claude-ide-box/common.sh" "$PROJECT" 2>/dev/null)" && st=0 || st=$?
   assert_status 0 "$st"
   assert_eq "survived:" "$out"
+}
+
+test_live_lock_is_not_broken_while_its_holder_is_paused() {
+  # A holder that is paused (a busy or suspended machine) right after it took
+  # the lock must keep it, however long the pause; a waiter that broke it
+  # would create the container a second time next to the holder.
+  local slow="$SANDBOX/slowbin"
+  mkdir -p "$slow"
+  for tool in mkdir ln; do
+    cat >"$slow/$tool" <<EOS
+#!/bin/sh
+real=/bin/$tool
+[ -x "\$real" ] || real=/usr/bin/$tool
+"\$real" "\$@" || exit \$?
+for a in "\$@"; do last="\$a"; done
+case "\$last" in
+  *.lock | *.lck) sleep 7 ;;
+esac
+EOS
+    chmod +x "$slow/$tool"
+  done
+  (cd "$PROJECT" && PATH="$slow:$PATH" exec "$WRAPPER" --version >/dev/null 2>&1 </dev/null) &
+  local holder=$!
+  sleep 0.5
+  run_wrapper --version
+  wait "$holder" || true
+  local log
+  log="$(cat "$HOME/.local/state/claude-ide-box/wrapper.log")"
+  assert_not_contains "$log" "removing lock"
+  assert_not_contains "$log" "removing stale lock"
+  local creators
+  creators="$(grep -c 'creating container' "$HOME/.local/state/claude-ide-box/wrapper.log" || true)"
+  assert_eq 1 "$creators" "the container must be created once; wrapper log:
+$log"
+  local first
+  first="$(grep 'creating container' "$HOME/.local/state/claude-ide-box/wrapper.log" | head -n 1 | sed 's/^[^[]*\[\([0-9]*\)\].*/\1/')"
+  assert_eq "$holder" "$first" "the waiter created the container while the paused holder held the lock"
 }
