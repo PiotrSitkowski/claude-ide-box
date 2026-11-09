@@ -260,7 +260,8 @@ and the choices. Its logs for IT are `install.log` and `linux-setup.log` in
 
 #### Uninstall on Windows
 
-Start menu > Claude IDE Box > **Uninstall Claude IDE Box** (or `Install Claude IDE Box.cmd -Uninstall`):
+Start menu > Claude IDE Box > **Uninstall Claude IDE Box**, or double-click
+`windows\Uninstall Claude IDE Box.cmd` in the extracted folder:
 
 1. The projects folder is copied to `Documents\Projects Claude - <date and time>` first; if that
    copy fails, nothing is removed.
