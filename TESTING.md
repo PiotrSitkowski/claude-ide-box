@@ -25,10 +25,12 @@ dependency to install on every runner for no extra coverage.
 
 | File | Covers |
 |---|---|
-| `test_wrapper.sh` | dropping 0, 1 and 2 leading paths; subcommands and `/slash` prompts kept; stdout carries only the container's output; exit status and stdin passed through; container name and sanitisation; identical mount path; hardening flags; masks only for existing files (nested, directories, PrestaShop preset); read-only directories created with normal permissions; `GIT_WRITABLE`; recreate on a new secret file, refusal while a session is active; fail closed without daemon, without docker, without image, for `/`, `$HOME` and its parents; environment passed by name only with deny list and host-path filter; token never on a command line or in the log; host-path flags dropped, inline JSON kept, `..` escapes caught; parallel starts create one container; stale lock removal; invocation through a guard symlink; unknown config key fails closed; CPU clamping; automatic guard; paths with commas, quotes or newlines refused before `docker run` (mount-option injection); a symlinked secret is masked at the logical path when the project path itself contains a symlink; prompts that contain paths are not dropped; `~`-relative env values are not passed; invalid `MEMORY`/`CPUS`/`TMP_SIZE`/UID settings rejected; an active session is recognised for both `claude` and `claude.exe`; nested `.git` directories and files read-only, a new one triggers recreation; masks found inside `node_modules` and `vendor`; a masked file moved away (renamed parent) or replaced by a decoy stops the start until `up --recreate`; the inode probe of a lock survives a lock directory that vanishes under it |
-| `test_cli.sh` | `guard` on both bundled-binary layouts and several versions, idempotence, `--undo`, six concurrent runs keeping the original binary; `allow` validation and proxy reload; presets (`php`, `github` warning, `prestashop` per project); generated allowlist; `setup` (internal network with `inhibit_ipv4`, proxy attached at its fixed IP, UID/GID and version build args, profiles, build failure, no daemon); `up`, `up --recreate`, `down`, `rm`, `rm --volume`, `shell`, `status`, `logs`; `login --token-stdin` (mode 600, rejects garbage); `doctor` (healthy host, `useTerminal: true`, wrapper unset, legacy key, commented-out key, unguarded binary, `claude` running on the host, `claude` on PATH, no daemon, non-internal network, `git.autoRepositoryDetection` warning); modules: profile chains (`env:a.b`), user profiles and presets in `~/.config`, `profile`/`profiles`/`presets` commands, the current project's profiles built by `setup`, an unknown profile failing closed, a profile image with root-owned files in `/home/claude` rejected; `forward`: port validation, a TCP connection relayed through `docker exec ... socat`, loopback-only listener; fixes from the first manual test: `cb_basename`/`cb_dirname` on names starting with `-` (`-zsh`, `-n`, `--`), `doctor` with login shells in `ps`, wrapper set only in an IDE profile (`User/profiles/<id>/settings.json`: ok there, warning elsewhere), `useTerminal` checked in profiles, failure when no file sets the wrapper, unguarded binaries only a warning with `AUTO_GUARD=0`; `login` (in a pseudo-terminal, Linux): the token is stored from the capture directory and never shown, the directory is mounted into a read-only, capability-free container and removed afterwards, pasting is the fallback; the token filter (node) masks tokens split across reads and wrapped in colour codes |
+| `test_wrapper.sh` | dropping 0, 1 and 2 leading paths; subcommands and `/slash` prompts kept; stdout carries only the container's output; exit status and stdin passed through; container name and sanitisation; identical mount path; hardening flags; masks only for existing files (nested, directories, PrestaShop preset); read-only directories created with normal permissions; `GIT_WRITABLE`; recreate on a new secret file, refusal while a session is active; fail closed without daemon, without docker, without image, for `/`, `$HOME` and its parents; environment passed by name only with deny list and host-path filter; token never on a command line or in the log; host-path flags dropped, inline JSON kept, `..` escapes caught; parallel starts create one container; stale lock removal; invocation through a guard symlink; unknown config key fails closed; CPU clamping; automatic guard; paths with commas, quotes or newlines refused before `docker run` (mount-option injection); a symlinked secret is masked at the logical path when the project path itself contains a symlink; prompts that contain paths are not dropped; `~`-relative env values are not passed; invalid `MEMORY`/`CPUS`/`TMP_SIZE`/UID settings rejected; an active session is recognised for both `claude` and `claude.exe`; nested `.git` directories and files read-only, a new one triggers recreation; masks found inside `node_modules` and `vendor`; a masked file moved away (renamed parent) or replaced by a decoy stops the start until `up --recreate`; the inode probe of a lock survives a lock directory that vanishes under it; `.env` templates (`.env.example`, `.env.sample`, `.env.template`, `.env.dist`) not masked by default, masked again through `MASK` or an empty `MASK_EXCEPT`, exceptions never unmask `MASK` or preset entries, a template masked by an older version does not trip the mask record while a moved `.env` still does |
+| `test_cli.sh` | `guard` on both bundled-binary layouts and several versions, idempotence, `--undo`, six concurrent runs keeping the original binary; `allow` validation and proxy reload; presets (`php`, `github` warning, `prestashop` per project); generated allowlist; `setup` (internal network with `inhibit_ipv4`, proxy attached at its fixed IP, UID/GID and version build args, profiles, build failure, no daemon); `up`, `up --recreate`, `down`, `rm`, `rm --volume`, `shell`, `status`, `logs` (denied-domain summary sorted by count, `allow` or `preset` hint including the user's presets, "allowed now" for domains allowed since, explanations for IPs, plain HTTP and other ports, no colour codes off a terminal); `login --token-stdin` (mode 600, rejects garbage); `doctor` (healthy host, `useTerminal: true`, wrapper unset, legacy key, commented-out key, unguarded binary, `claude` running on the host, `claude` on PATH, no daemon, non-internal network, `git.autoRepositoryDetection` warning); modules: profile chains (`env:a.b`), user profiles and presets in `~/.config`, `profile`/`profiles`/`presets` commands, the current project's profiles built by `setup`, an unknown profile failing closed, a profile image with root-owned files in `/home/claude` rejected; `forward`: port validation, a TCP connection relayed through `docker exec ... socat`, loopback-only listener; fixes from the first manual test: `cb_basename`/`cb_dirname` on names starting with `-` (`-zsh`, `-n`, `--`), `doctor` with login shells in `ps`, wrapper set only in an IDE profile (`User/profiles/<id>/settings.json`: ok there, warning elsewhere), `useTerminal` checked in profiles, failure when no file sets the wrapper, unguarded binaries only a warning with `AUTO_GUARD=0`; `login` (in a pseudo-terminal, Linux): the token is stored from the capture directory and never shown, the directory is mounted into a read-only, capability-free container and removed afterwards, pasting is the fallback; the token filter (node) masks tokens split across reads and wrapped in colour codes; `quickstart`: all six steps with a chosen profile (built and set for the project), a pasted token, guard, a settings file created only where none existed, doctor last; a second run that rebuilds nothing and changes nothing; no Docker daemon, a failing build or closed stdin stop the run before anything later happens; an unknown profile is asked again; an existing JSONC settings file is never modified and can be opened in `$EDITOR`; the API-key choice stores nothing |
 | `test_pii.sh` | folders recorded by pii-airgap: no record, no check; the case from a manual test (a copy restored in place) refused before any container exists, stdout empty, the files named; a clean copy starts after a check with `--rm`, no network, read-only root, no capabilities, the copy and the map read-only, and the map never reaches the project container; a project inside a copy and a copy inside the project are checked; unrelated and vanished copies are ignored; a missing or replaced map refuses without running the check; a failed check refuses; control characters in file names from the copy never reach the terminal; `up` refuses too; a folder written by `restore --out` is refused with its own message |
 | `test_engine_versions.sh` | minimum engine versions: thresholds only in the data file, with CVE and source; Docker Desktop 4.44.2 fails, 4.44.3 warns, 4.97.0 and 4.98.0 pass; Docker Engine 25.0.1, 24.0.8, 23.0.6, 20.10.27 fail, 25.0.2, 24.0.9, 26.1.0, 29.9.2 pass; runc 1.1.11 and 1.0.0-rc95 fail, 1.1.12 passes; suffixes (`29.9.2-rd`, `28.0.4+azure-1`, `1.1.12-0ubuntu2~22.04.1`, `v1.1.14`, `(12345)`) and numeric comparison (4.9.0, 4.100.0); an empty, `unknown`, `dev` or `<no value>` engine version, a missing runc and a Docker Desktop without a readable version (also one recognised only by its linuxkit kernel) fail; `setup` refuses before building, warns below 4.97.0; the wrapper refuses with nothing on stdout and no container, `up` too; `ALLOW_VULNERABLE_DOCKER=1` (global only, 0/1) lets setup and the wrapper run while every `doctor` prints `[RISK]` and still fails; no colour codes off a terminal; Podman reported as not checked |
+| `test_engines.sh` | Docker's run options unchanged; Podman: DNS-less internal network instead of `inhibit_ipv4`, `--read-only-tmpfs=false`, `/dev/shm` tmpfs, `--http-proxy=false`, `notmpcopyup` on masked directories (and not on Docker), CPU count from `.Host.CPUs`, doctor's network check; rootless Podman gets `--userns=keep-id` (also for setup's image check); refused without fail-open: rootless Podman on cgroup v1, a missing `pids` controller, the CNI backend, rootless Docker, a Docker engine that does not enforce limits - no container is created and stdout stays empty; an engine name without a path; every image reference fully qualified |
+| `test_try.sh` | `up --try`: copy mounted at the project's own path in a separate `-try` container and home volume, masks and read-only mounts applied to the copy, secrets (also those reached through an absolute symlink) emptied in the copy, the wrapper switching to the session and resuming it; `try diff`; `try apply`: modifications, additions in new directories, deletions, executable bit, container removed before anything is read, session cleaned up; never writes masked, read-only or nested `.git` paths; conflicts block everything, `--skip-conflicts` applies the rest and keeps Claude's version; identical changes are not conflicts; symlinks applied as links and never followed, also when a directory of the copy is replaced by a link to a host directory; no writes through a symlinked project directory; FIFOs skipped; a deleted directory keeps files the user added; `try discard`, `try end`; no session, no Docker daemon and a copy path with a comma all fail closed; a symlinked cache path works |
 | `test_install.sh` | install, settings snippet, idempotence, refusing to overwrite foreign files, no sudo, `--uninstall` undoes guard and keeps config, `--prefix` |
 | `test_integration_skip.sh` | the integration suite says SKIPPED without Docker and fails when `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` |
 
@@ -36,8 +38,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 177 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 177 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 236 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 236 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
@@ -93,14 +95,15 @@ real installation, and then checks from inside real containers:
 |---|---|
 | (a) proxy | allowed domain passes; other domain gets 403; plain HTTP, bare IPs and ports other than 443 get 403; direct connections and raw TCP fail; no default route |
 | (b) DNS | external names do not resolve |
-| (c) masks | `.env` empty and read-only, `.env.d/` empty, host file untouched; a `.env.local` created later is masked after the next start |
+| (c) masks | `.env` empty and read-only, `.env.d/` empty, host file untouched, `.env.example` readable; a `.env.local` created later is masked after the next start |
 | (d) read-only | writes to `.git/hooks`, `.git/config`, `.vscode`, `.idea`, `.devcontainer`, `.agent` fail; `.git` cannot be removed, `.vscode` cannot be renamed |
 | (e) ownership | writing the project works; new files belong to the host UID |
 | (f) privileges | `CapEff` and `CapBnd` zero, `NoNewPrivs` 1, non-root, no `docker.sock`, read-only rootfs, no sudo, pids/memory limits and `--init`, home not mounted |
 | (g) wrapper | `claude-ide-box-exec /fake/native-binary/claude --version` prints exactly one line, the version |
-| extra | host listeners unreachable on the internal gateway and `docker0` (with a positive control from the default bridge); Claude Code's API request goes through squid without DNS (tunnel count in the squid log rises, the API answers "Invalid API key" to a fake key); squid runs without capabilities as `proxy` on a read-only rootfs; `claude-ide-box logs` shows the denial; one project's `~/.claude` and files are invisible to another; fail closed with an unreachable daemon and for `$HOME` |
+| extra | host listeners unreachable on the internal gateway and `docker0` (with a positive control from the default bridge); Claude Code's API request goes through squid without DNS (tunnel count in the squid log rises, the API answers "Invalid API key" to a fake key); squid runs without capabilities as `proxy` on a read-only rootfs; `claude-ide-box logs` shows the denial and suggests `claude-ide-box allow example.com`; one project's `~/.claude` and files are invisible to another; fail closed with an unreachable daemon and for `$HOME` |
 | allowlist reload | a domain is refused before `claude-ide-box allow` and passes right after it, and squid confirms the reload (it is signalled with SIGHUP; `squid -k reconfigure` depends on a PID file that `squid -N` does not always write, which made the reload fail on Debian's squid 5.7 in CI) |
 | minimum engine versions | `doctor` reads the real engine's Engine and runc versions and finds no known escape |
+| ephemeral mode | `up --try`: `.env` empty and `.git` read-only in the copy's container, no direct network, the project untouched while the container writes the copy, `try diff` shows the change on the host, `try apply` writes it without touching `.env` and removes the container |
 | security fixes | a nested `.git` is read-only after the next start; a directory named `q,src=$HOME,dst=...` with a `.env` inside stops the container from being created |
 | dev servers | `claude-ide-box forward` serves a server running in the container on `127.0.0.1` of the host; the container still publishes no ports |
 | base image | a native npm module compiles with node-gyp (no header download); Python 3 with venv |
@@ -108,6 +111,30 @@ real installation, and then checks from inside real containers:
 
 Without a Docker daemon the script prints a banner saying **INTEGRATION TESTS SKIPPED** and that
 nothing was verified; with `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` (as in CI) that is a failure.
+
+The additions of quickstart, Podman and `--try` were written the same way, each test file run red
+first: the `.env` template masks (5 of 6 red; the sixth is a refusal that an unknown key also
+produced), the `logs` summary (4 of 5 red; the sixth, "no colour codes", passed against plain
+output), `quickstart` (9 of 9), the engine layer (12 of 14; the two passes were Docker's unchanged
+options and the CPU count), the Podman `notmpcopyup` mask (1 of 1) and `--try` (17 of 18; the comma
+refusal passed vacuously). Reading through a directory of the try copy that the container replaced
+by a symlink to a host directory (which would have copied host files into the project) surfaced
+while doing so and got its own red test first. The fix for an inode probe that aborted the wrapper
+when a lock vanished under it, found at the same time, is a separate change on `main`'s line.
+
+The rebase of quickstart, Podman and `--try` onto the Windows installer turned up a test that
+was wrong only on busybox: the two `try apply` symlink tests checked for leaked host content with
+`grep -r`, which in the current `bash:3.2` image follows symlinks and so also read the links the
+tests expect to be applied. 12 of 20 runs failed there, with both project paths still being links
+and no host content copied. The check now reads regular files only (`find -type f`); a deliberate
+leak (`cp -L` instead of `ln -s` in `try apply`) still fails the test.
+
+`test_logs_summarise_denied_domains_most_frequent_first` failed now and then in the `bash:3.2`
+CI job, with no assertion message. A trap on errors showed status 141: `grep ... | head -n 1`
+inside a command substitution, where busybox `grep` was still writing when `head` had left, died of
+SIGPIPE, and under `pipefail` and `set -e` that ended the test. In the `bash:3.2` image it failed 4
+times in 120 runs; with `sed -n 1p`, which reads all its input, 0 in 300. Two other tests of this
+change used the same pattern and were changed the same way.
 
 ### Where they ran
 
@@ -119,6 +146,23 @@ failed, 0 skipped** without profiles, run as UID 30033 with a base image that ha
 throw-away `HOME`, so the Docker client's own proxy configuration does not reach the builds).
 With the minimum-version check: **59 passed, 0 failed, 0 skipped** without profiles (58 on `main` at
 `550788b` in the same setup).
+
+With quickstart, Podman and `--try`: **73 passed, 0 failed, 0 skipped** without profiles (59 on
+`main` at `1b0166a` in the same setup).
+
+**Rootful Podman 4.9.3, development sandbox, before the rebase onto the Windows installer** (not
+repeated after the rebase: Podman is not installed in the current sandbox) - **61 passed, 12
+failed.** Passing: setup with Podman, masks (including the directory mask that
+`notmpcopyup` fixed), read-only paths, ownership, privileges, `/run`, `/var/tmp` and `/dev/shm`, the
+DNS-less internal network and resolver, wrapper stdout, host listeners unreachable (with a positive
+control), proxy hardening, `forward`, per-project homes, a new `.env.local` masked, nested `.git`,
+`up --try` through `try apply`, fail closed. Failing: every check that needs the project container
+to reach squid (10, plus the native npm module that downloads through it) - on that host Docker's
+`FORWARD DROP` policy drops traffic between containers on a Podman bridge, so the container fails
+closed, and changing the host firewall was not possible there - and the mount-option check, whose
+container was still being torn down after the hung API check had been interrupted; the same case
+reproduced by hand refuses the start and creates no container. Rootless Podman and rootless Docker
+were checked by hand on that host: both are refused with their messages, as intended on cgroup v1.
 Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
@@ -155,6 +199,9 @@ tests/integration/run.sh
 Optional environment: `CLAUDE_IDE_BOX_IT_PROFILES=php`, `CLAUDE_IDE_BOX_IT_KEEP=1` (keep containers for
 inspection), `CLAUDE_IDE_BOX_IT_BASE_IMAGE`, `CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE`,
 `CLAUDE_IDE_BOX_IT_BUILD_NETWORK`, `CLAUDE_IDE_BOX_IT_UPSTREAM_PROXY`, `CLAUDE_IDE_BOX_IT_SUBNET`.
+`CLAUDE_IDE_BOX_DOCKER=podman` runs the same suite against Podman (rootful as root, rootless as
+a user); the suite adds Podman-specific checks (a DNS-less internal network) and, as root, gives the
+test projects to UID 1000, the container user claude-ide-box uses for root.
 
 ## Not verified automatically
 
@@ -165,6 +212,10 @@ inspection), `CLAUDE_IDE_BOX_IT_BASE_IMAGE`, `CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE
 | Docker Desktop (macOS, Windows/WSL2) | no Docker Desktop in CI. The minimum-version check reads the Desktop version from `Platform.Name` of `docker version`, which was not seen on a real Desktop here. Its VM, file sharing, ownership mapping and DNS layer differ from native Linux; in particular `inhibit_ipv4`, `--dns 127.0.0.1` on an internal network and bind-mounting a file over a project path need checking there |
 | Apple Silicon | images are multi-arch by construction (all bases are), not built on arm64 in CI |
 | macOS `ps`, `/bin/bash` 3.2 against real IDE settings paths | unit tests run on macOS but with fake extension and settings directories |
+| Rootless Podman end to end | the development sandbox has cgroup v1, where claude-ide-box refuses rootless Podman (checked against the real Podman there); its cgroup v2 path - `--userns=keep-id`, limits enforced - is covered by unit tests and a manual `keep-id` ownership check only |
+| Podman's proxy path on a host without Docker | in the development sandbox Docker's `FORWARD DROP` policy also drops traffic between containers on Podman bridges, so the project container could not reach squid there (failing closed); changing the firewall was not possible in that sandbox |
+| Podman machine (macOS, Windows) | not available in the sandbox; its VM is rootless Podman by default |
+| `quickstart` with a real terminal, `login` from it, and opening the settings file in a GUI editor | unit tests drive it through stdin |
 
 ## Manual checklist
 

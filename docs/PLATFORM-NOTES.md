@@ -114,3 +114,24 @@ string, so suffixes (`-rd`, `+azure`, `-0ubuntu2`, `v` prefixes, `(build)`) do n
 empty or non-numeric version (`unknown`, `dev`, a missing runc component) is treated as vulnerable.
 The Docker Desktop row was not re-measured for this check; it follows the format documented for
 `docker version` on Docker Desktop and has to be confirmed on a Mac.
+
+## Podman and rootless engines (measured 2026-11-05)
+
+Podman 4.9.3 with netavark 1.4 and aardvark-dns 1.4 (Ubuntu 24.04 packages), cgroup v1 host, and
+rootless Docker 29.9 (`dockerd-rootless.sh`, slirp4netns) on the same host.
+
+| Observation | Consequence |
+|---|---|
+| `podman network create --opt com.docker.network.bridge.inhibit_ipv4=true` fails: unsupported option | not usable on Podman |
+| `--internal` network with DNS (the default): the bridge gets the gateway address (`172.30.97.1`), a host listener on it is reachable from the container, and `/etc/resolv.conf` points at aardvark-dns on the gateway even with `--dns 127.0.0.1` | DNS must be disabled |
+| `--internal --disable-dns`: the bridge has no IPv4 address, the host listener is unreachable, `resolv.conf` is `nameserver 127.0.0.1` | the Podman equivalent of `inhibit_ipv4` |
+| `--mount type=tmpfs,dst=<dir>` copies the content of the directory underneath into the tmpfs (`tmpcopyup` is the default); a masked `.env.d/prod` was readable | masked directories need `notmpcopyup` (Docker rejects that option) |
+| `--read-only` adds writable tmpfs on `/run` and `/var/tmp`; `--read-only-tmpfs=false` removes them but leaves `/dev/shm` read-only, which kills squid (`shm_open`) | `--read-only-tmpfs=false` plus `--tmpfs /dev/shm` |
+| `podman run` copies the host's `*_proxy` variables into the container unless `--http-proxy=false` | set it |
+| Short image names (`node:22-bookworm-slim`) fail without a TTY: no unqualified-search registries | all image references are fully qualified (`docker.io/library/...`) |
+| `podman info --format '{{.NCPU}}'` fails; `{{.Host.CPUs}}` works. `network inspect` has `.DNSEnabled` and `.Subnets` instead of `.Options` and `.IPAM` | engine-specific formats |
+| Rootless, cgroup v1: `--memory 4g --pids-limit 512 --cpus 2` prints "Resource limits are not supported and ignored on cgroups V1 rootless systems" and runs anyway | refused |
+| Rootless without `--userns=keep-id`: container UID 1000 maps to a subordinate UID and cannot write the project (`Permission denied`); with keep-id files get the host UID and capabilities stay empty | keep-id |
+| Rootless Docker, cgroup v1: `docker info` reports `MemoryLimit`, `PidsLimit`, `CPUCfsQuota` false and `CgroupDriver: none`; `docker run --memory 4g --pids-limit 512 --cpus 2` succeeds without a warning | limits are checked through `docker info` |
+| Rootless Docker: container UID 1000 cannot write a bind-mounted directory of the host user; only UID 0 maps to the host user | refused |
+| Host running Docker and rootful Podman: Docker sets `FORWARD` to `DROP`; with `br_netfilter` (`bridge-nf-call-iptables=1`) traffic between two containers on the same Podman bridge goes through `FORWARD` and is dropped | project containers cannot reach the proxy (fails closed); documented in README |

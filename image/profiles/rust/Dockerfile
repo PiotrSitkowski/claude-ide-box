@@ -4,7 +4,7 @@
 # The toolchain is read-only under /usr/local/rustup; cargo's registry and
 # build caches live in the home volume.
 ARG BASE_IMAGE=claude-ide-box/base:latest
-ARG RUST_IMAGE=rust:1-slim-bookworm
+ARG RUST_IMAGE=docker.io/library/rust:1-slim-bookworm
 FROM ${RUST_IMAGE} AS rust
 RUN rustup component add clippy rustfmt
 

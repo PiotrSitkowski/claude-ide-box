@@ -29,12 +29,13 @@ do one of these:
 |---|---|
 | execute code on the host | through the wrapper, the CLI, `guard`, `install.sh`, or anything Claude IDE Box itself runs on the host |
 | read host data outside the project | home directory, `~/.ssh`, other projects, the token file |
-| read a masked file | `.env`, `.env.*`, configured masks |
+| read a masked file | `.env`, `.env.*` (except the committed templates in `MASK_EXCEPT`), configured masks |
 | write a read-only path | `.git`, `.vscode`, `.idea`, `.agent`, `.agents`, `.devcontainer`, configured entries |
 | reach the network beyond the allowlist | other domains, other ports, bare IPs, DNS, host or LAN services |
 | change the sandbox configuration | anything under `~/.config/claude-ide-box`, the proxy allowlist |
 | make the wrapper run `claude` on the host | any fail-open path |
 | start in a folder holding restored personal data | a container starting in, above or below a copy or restored folder recorded by pii-airgap whose check reports values of its token map, whose map is missing or replaced, or whose check fails; the map reaching the project container |
+| abuse a try session (`up --try`) | make `try diff` or `try apply` read a host file outside the copy, write a masked or read-only path or a `.git` directory, write outside the project, or run anything from the project |
 
 ## Out of scope
 
@@ -70,6 +71,15 @@ These are documented trade-offs, not vulnerabilities. Proposals to close them ar
   is writable until the next start (then it is mounted read-only). The host only runs git in it if
   the IDE auto-detects sub-repositories, hence `"git.autoRepositoryDetection": false` in the
   recommended settings; `doctor` warns without it.
+- **Container engines.** The guarantees above are verified on rootful Docker and rootful Podman
+  (netavark). Rootless Docker is refused: under it only container root maps to the host user, so the
+  container user could write the project only as root, and on cgroup v1 it ignores memory, CPU and
+  pids limits without an error. Rootless Podman is supported only where it enforces those limits
+  (cgroup v2 with delegated controllers); on cgroup v1 it is refused. Podman needs three changes
+  to match Docker's isolation - a DNS-less internal network (otherwise the host has an address on
+  the bridge and `--dns 127.0.0.1` is ignored), `notmpcopyup` on masked directories (otherwise
+  Podman copies the masked content into the tmpfs that hides it) and `--http-proxy=false` - and
+  claude-ide-box applies them. A configuration that silently loses one of them is in scope.
 - **guard depends on the extension layout.** A new extension version is unguarded until the next
   wrapper start or `claude-ide-box guard`; `doctor` reports it.
 - **Session history is not visible in the IDE panel.** The extension lists past conversations from

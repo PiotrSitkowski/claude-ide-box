@@ -3,7 +3,7 @@
 #   claude-ide-box preset go on
 # GOTOOLCHAIN=local: the toolchain changes only when the image is rebuilt.
 ARG BASE_IMAGE=claude-ide-box/base:latest
-ARG GO_IMAGE=golang:1-bookworm
+ARG GO_IMAGE=docker.io/library/golang:1-bookworm
 FROM ${GO_IMAGE} AS go
 
 FROM ${BASE_IMAGE}

@@ -5,8 +5,8 @@
 # pointed at the proxy through the "egress-proxy" host entry that each
 # container gets.
 ARG BASE_IMAGE=claude-ide-box/base:latest
-ARG JDK_IMAGE=eclipse-temurin:21-jdk
-ARG MAVEN_IMAGE=maven:3-eclipse-temurin-21
+ARG JDK_IMAGE=docker.io/library/eclipse-temurin:21-jdk
+ARG MAVEN_IMAGE=docker.io/library/maven:3-eclipse-temurin-21
 FROM ${JDK_IMAGE} AS jdk
 FROM ${MAVEN_IMAGE} AS maven
 
