@@ -14,6 +14,17 @@
     @{ Id = 'ocr'; SizeMB = 60; PerLanguageMB = 7 }
   )
 
+  # Personal data: pii-airgap (https://github.com/PiotrSitkowski/pii-airgap), a
+  # separate image with its own language models (1.36 GB, measured 2026-11-09).
+  # Fetched with git at exactly this commit and built inside WSL; a newer
+  # version comes with a new Claude IDE Box release that changes this line.
+  Pii = @{
+    Id = 'pii'
+    SizeMB = 1360
+    Repo = 'https://github.com/PiotrSitkowski/pii-airgap'
+    Commit = '621a18ad79aebfd52d1fb6117767fd4680200bd1'
+  }
+
   Dev = @(
     @{ Id = 'python'; Preset = 'python'; SizeMB = 50 }
     @{ Id = 'php'; Preset = 'php'; SizeMB = 190 }

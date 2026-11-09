@@ -45,7 +45,7 @@ export NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
 apt-get update
 apt-get -y -o Dpkg::Options::=--force-confold upgrade
 apt-get install -y --no-install-recommends \
-  docker.io docker-buildx ca-certificates curl tar util-linux
+  docker.io docker-buildx ca-certificates curl tar util-linux git
 usermod -aG docker "$user"
 systemctl enable docker.service >/dev/null 2>&1 || true
 

@@ -7,6 +7,7 @@
 #                     --projects NAME --first NAME
 #                     [--preset-on NAME]... [--preset-off NAME]...
 #                     [--vscode-commit SHA --vscode-profile ID]
+#                     [--pii-repo URL --pii-commit SHA | --pii-commit none]
 #
 #   --src             the claude-ide-box files (on /mnt/c, possibly with CRLF)
 #   --profile         image profiles for all projects ("base" for none)
@@ -17,10 +18,15 @@
 #                     with the Claude Code extension
 #   --vscode-profile  the VS Code profile's id; on the WSL side every profile
 #                     has its own extension list, so Claude Code is added to it
+#   --pii-repo/commit pii-airgap: fetched with git at exactly this commit,
+#                     linked as ~/.local/bin/pii-airgap and its image built;
+#                     "none" removes what this script installed, unless
+#                     pii-airgap still has recorded copies (Claude IDE Box
+#                     needs its image to check them before every start)
 set -euo pipefail
 
 src="" profile="base" ocr="eng" projects="" first="" commit="" vsprofile=""
-presets_on="" presets_off=""
+presets_on="" presets_off="" pii_repo="" pii_commit=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --src) src="$2" ;;
@@ -32,6 +38,8 @@ while [ $# -gt 0 ]; do
     --preset-off) presets_off="$presets_off $2" ;;
     --vscode-commit) commit="$2" ;;
     --vscode-profile) vsprofile="$2" ;;
+    --pii-repo) pii_repo="$2" ;;
+    --pii-commit) pii_commit="$2" ;;
     *) echo "provision-user.sh: unknown option $1" >&2; exit 1 ;;
   esac
   shift 2
@@ -85,6 +93,59 @@ for p in $presets_off; do "$cib" preset "$p" off; done
 
 # 5. Projects folder.
 mkdir -p "$HOME/$projects/$first"
+
+# 5b. pii-airgap (optional). Only a link that points into $pii_src is
+#     treated as ours; a pii-airgap installed some other way is left alone.
+pii_src="$HOME/.local/src/pii-airgap"
+pii_link="$HOME/.local/bin/pii-airgap"
+case "$pii_commit" in
+  "") ;;
+  none)
+    if [ -L "$pii_link" ] && [ "$(readlink "$pii_link")" = "$pii_src/bin/pii-airgap" ]; then
+      if [ -n "$(ls -A "$HOME/.local/state/pii-airgap/copies" 2>/dev/null)" ]; then
+        say "pii-airgap kept: it has recorded copies, which Claude IDE Box checks with its image"
+      else
+        rm -f "$pii_link"
+        rm -rf "$pii_src"
+        docker image rm pii-airgap:latest >/dev/null 2>&1 || true
+        say "pii-airgap removed"
+      fi
+    fi
+    ;;
+  *)
+    case "$pii_commit" in
+      *[!0-9a-f]*) echo "provision-user.sh: invalid pii-airgap commit '$pii_commit'" >&2; exit 1 ;;
+    esac
+    [ ${#pii_commit} -eq 40 ] || { echo "provision-user.sh: the pii-airgap commit must be a full 40-character hash" >&2; exit 1; }
+    case "$pii_repo" in
+      https://github.com/*) ;;
+      *) echo "provision-user.sh: invalid pii-airgap repository '$pii_repo'" >&2; exit 1 ;;
+    esac
+    command -v git >/dev/null || { echo "provision-user.sh: git is missing (sudo apt-get install git)" >&2; exit 1; }
+    if [ "$(git -C "$pii_src" rev-parse HEAD 2>/dev/null || true)" != "$pii_commit" ]; then
+      say "downloading pii-airgap ($pii_commit)"
+      rm -rf "$pii_src.new"
+      git init -q "$pii_src.new"
+      git -C "$pii_src.new" fetch -q --depth 1 "$pii_repo" "$pii_commit"
+      git -C "$pii_src.new" -c advice.detachedHead=false checkout -q FETCH_HEAD
+      # git checks every object against its hash, so this commit id stands
+      # for the exact content.
+      if [ "$(git -C "$pii_src.new" rev-parse HEAD)" != "$pii_commit" ]; then
+        echo "provision-user.sh: pii-airgap: got a different commit than $pii_commit" >&2
+        exit 1
+      fi
+      rm -rf "$pii_src"
+      mv "$pii_src.new" "$pii_src"
+    fi
+    mkdir -p "${pii_link%/*}"
+    ln -sfn "$pii_src/bin/pii-airgap" "$pii_link"
+    # The language models are downloaded while the image is built; the
+    # containers that read documents never have a network.
+    say "building the pii-airgap image (first time: several minutes)"
+    "$pii_link" build
+    say "pii-airgap installed"
+    ;;
+esac
 
 # 6. VS Code server and the Claude Code extension on the WSL side (the IDE
 #    runs the extension here, next to the files).

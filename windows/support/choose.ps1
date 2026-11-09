@@ -2,7 +2,7 @@
 # The two choice screens of the Windows installer (dot-sourced after lib.ps1):
 #   1. what Claude is for: office work, programming, or both
 #   2. what to install for that: modules, OCR languages, programming languages
-# Show-Choice returns @{ Purpose; Office; Dev; Ocr } or $null when cancelled.
+# Show-Choice returns @{ Purpose; Office; Dev; Ocr; Pii } or $null when cancelled.
 # Every text comes from i18n; labels grow with their text, so longer
 # translations wrap instead of being cut.
 
@@ -191,6 +191,23 @@ function Show-Choice($catalog, [string]$srcRoot, $current) {
   $page2.Controls.AddRange(@($ocrLabel, $ocrList))
   $officeCtl += @($ocrLabel, $ocrList)
 
+  # Personal data: for every purpose (code holds client data too); ticked by
+  # default for documents, until the person ticks or unticks it themselves.
+  $piiHead = New-Label (M 'Group_pii') $bold 0 22
+  $piiCheck = New-Object Windows.Forms.CheckBox
+  $piiCheck.Text = (M 'Module_pii') + '   ' + (M 'Size_Approx' (Format-Size $catalog.Pii.SizeMB))
+  $piiCheck.AutoSize = $true
+  $piiCheck.MaximumSize = New-Object Drawing.Size($wrap, 0)
+  $piiCheck.Margin = New-Object Windows.Forms.Padding(0, 10, 0, 0)
+  if ($current -and $null -ne $current.Pii) {
+    $piiCheck.Checked = [bool]$current.Pii
+    $piiCheck.Tag = 'chosen'
+  }
+  $piiDesc = New-Label (M 'Module_pii_Desc') $null 20 0
+  $piiDesc.ForeColor = $muted
+  $page2.Controls.AddRange(@($piiHead, $piiCheck, $piiDesc))
+  $piiCheck.Add_Click({ $piiCheck.Tag = 'chosen' })
+
   $devHead = New-Label (M 'Group_dev') $bold 0 22
   $devNote = New-Label (M 'Dev_Note') $null 0 4
   $devNote.ForeColor = $muted
@@ -262,6 +279,7 @@ function Show-Choice($catalog, [string]$srcRoot, $current) {
         if ($checks[$m.Id].Checked) { if ($m.SizeMB -gt 0) { $mb += $m.SizeMB } else { $unknown = $true } }
       }
     }
+    if ($piiCheck.Checked) { $mb += [int]$catalog.Pii.SizeMB }
     $t = M 'Size_Total' (Format-Size $mb)
     if ($unknown) { $t += ' ' + (M 'Size_PlusUnknown') }
     $sizeLabel.Text = $t
@@ -282,7 +300,8 @@ function Show-Choice($catalog, [string]$srcRoot, $current) {
     } else {
       foreach ($c in $officeCtl) { $c.Visible = ($p -ne 'dev') }
       foreach ($c in $devCtl) { $c.Visible = ($p -ne 'office') }
-      $devHead.Margin = New-Object Windows.Forms.Padding(0, $(if ($p -eq 'dev') { 4 } else { 22 }), 0, 0)
+      $piiHead.Margin = New-Object Windows.Forms.Padding(0, $(if ($p -eq 'dev') { 4 } else { 22 }), 0, 0)
+      if ($piiCheck.Tag -ne 'chosen') { $piiCheck.Checked = ($p -ne 'dev') }
       & $updateSize
       $page1.Visible = $false
       $page2.Visible = $true
@@ -295,6 +314,7 @@ function Show-Choice($catalog, [string]$srcRoot, $current) {
   }
 
   foreach ($c in $checks.Values) { $c.Add_CheckedChanged({ & $updateSize }) }
+  $piiCheck.Add_CheckedChanged({ & $updateSize })
   $ocrList.Add_ItemCheck({ $form.BeginInvoke([Action] { & $updateSize }) | Out-Null })
   $back.Add_Click({ & $showPage 1 })
   $next.Add_Click({
@@ -326,5 +346,5 @@ function Show-Choice($catalog, [string]$srcRoot, $current) {
     $dev = @($catalog.Dev | Where-Object { $checks[$_.Id].Checked } | ForEach-Object { $_.Id })
   }
   if ($ocr.Count -eq 0) { $ocr = @('eng') }
-  return @{ Purpose = $p; Office = $office; Dev = $dev; Ocr = $ocr }
+  return @{ Purpose = $p; Office = $office; Dev = $dev; Ocr = $ocr; Pii = [bool]$piiCheck.Checked }
 }
