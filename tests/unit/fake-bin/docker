@@ -70,6 +70,21 @@ case "$cmd" in
     ;;
   inspect)
     need_daemon
+    case "${*: -1}" in
+      *-proxy)
+        # The proxy has its own state when a test sets one ("true"/"false");
+        # otherwise it runs whenever anything was created, as before.
+        if [ -f "$dir/proxy-state" ]; then
+          cat "$dir/proxy-state"
+        elif [ -f "$dir/state" ]; then
+          echo "true"
+        else
+          echo "Error: No such object" >&2
+          exit 1
+        fi
+        exit 0
+        ;;
+    esac
     if [ -f "$dir/state" ]; then
       cat "$dir/state"
     else
@@ -122,6 +137,14 @@ case "$cmd" in
     ;;
   start)
     need_daemon
+    case "${*: -1}" in
+      *-proxy)
+        [ "${FAKE_PROXY_START_FAILS:-0}" != "1" ] || { echo "Error: cannot start" >&2; exit 1; }
+        echo "${FAKE_PROXY_AFTER_START:-true}" >"$dir/proxy-state"
+        echo "$1"
+        exit 0
+        ;;
+    esac
     if [ -f "$dir/state" ]; then
       read -r _ label <"$dir/state" || true
       echo "true $label" >"$dir/state"

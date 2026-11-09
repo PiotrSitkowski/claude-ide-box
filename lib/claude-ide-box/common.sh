@@ -654,6 +654,29 @@ cb_proxy_running() {
   [ "$(cb_docker inspect --format '{{.State.Running}}' "$CB_PROXY_NAME" 2>/dev/null || true)" = "true" ]
 }
 
+# The proxy is the project containers' only way out. Docker does not always
+# bring it back when the daemon restarts (seen on WSL after `wsl --shutdown`,
+# i.e. after every Windows restart, despite --restart unless-stopped), and a
+# session would then start without any network. Start a stopped proxy before
+# the session; a proxy that does not exist is setup's job and is only logged.
+cb_ensure_proxy() {
+  local running
+  running="$(cb_docker inspect --format '{{.State.Running}}' "$CB_PROXY_NAME" 2>/dev/null || true)"
+  case "$running" in
+    true) return 0 ;;
+    "")
+      cb_log "proxy $CB_PROXY_NAME not found - run 'claude-ide-box setup'"
+      return 0
+      ;;
+  esac
+  cb_require_network
+  cb_log "starting stopped proxy $CB_PROXY_NAME"
+  cb_docker start "$CB_PROXY_NAME" >/dev/null 2>&1 ||
+    cb_die "the proxy $CB_PROXY_NAME is stopped and cannot be started (see 'docker start $CB_PROXY_NAME'); run 'claude-ide-box setup'"
+  cb_proxy_running ||
+    cb_die "the proxy $CB_PROXY_NAME stopped right after it was started (see 'claude-ide-box logs --all'); run 'claude-ide-box setup'"
+}
+
 # Export CLAUDE_CODE_OAUTH_TOKEN from the token file, if it holds one.
 cb_export_token() {
   local token=""
@@ -1063,6 +1086,7 @@ cb_ensure_container() {
     cb_require_docker
     cb_die "image $image not found - run 'claude-ide-box setup' in $CB_PROJECT_DIR"
   fi
+  cb_ensure_proxy
 
   cb_build_run_args
   hash="$(cb_run_args_hash "$image_id")"
