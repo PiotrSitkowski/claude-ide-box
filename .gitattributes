@@ -1,0 +1,11 @@
+# Scripts run in Linux containers and in WSL: a Windows checkout must not turn
+# them into CRLF files (bash fails on "\r"). Windows-only scripts keep CRLF.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+*.psd1 text eol=crlf

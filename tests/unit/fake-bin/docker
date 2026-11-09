@@ -95,6 +95,7 @@ case "$cmd" in
               src="${a#type=bind,src=}"
               src="${src%,dst=/run/claude-ide-box-login}"
               [ -z "${FAKE_LOGIN_TOKEN:-}" ] || printf '%s\n' "$FAKE_LOGIN_TOKEN" >"$src/token"
+              [ -z "${FAKE_LOGIN_URL:-}" ] || printf '%s\n' "$FAKE_LOGIN_URL" >"$src/url"
               ;;
           esac
         done

@@ -337,6 +337,23 @@ on your computer as usual, on the same files in the project folder.
 | OpenDocument `.odt`, `.ods`, `.odp` (LibreOffice, OpenOffice) | read, edit and convert (LibreOffice) |
 | PDF, scans | extract text, merge and split (poppler, qpdf), OCR (tesseract `pol`, `eng`) |
 
+The same tools also come as three smaller modules, so you install only what you use (sizes on disk,
+on top of the base image):
+
+| Module | Adds | Size |
+|---|---|---|
+| `docs` | python-docx, openpyxl, pypdf, pandoc, poppler, qpdf: read and edit Word, Excel, PowerPoint, PDF | about 420 MB |
+| `libreoffice` | conversion to PDF, formula recalculation, `.doc`/`.xls`, OpenDocument | about 590 MB |
+| `ocr` | Tesseract and poppler, in the languages set by `OCR_LANGUAGES` (default `eng`) | about 130 MB + 7 MB per language |
+
+```bash
+claude-ide-box profile docs libreoffice ocr
+echo 'OCR_LANGUAGES=eng deu' >>~/.config/claude-ide-box/config   # Tesseract codes, e.g. pol, fra, chi_sim
+claude-ide-box setup
+```
+
+`office` stays as it was (all three, with Polish and English OCR).
+
 Microsoft Office itself cannot run in a Linux container and does not need to. Complex features -
 tracked changes, pivot tables, charts - survive best when Claude edits a `.docx`/`.xlsx` in place
 rather than converting it back and forth. Macros (`.docm`, `.xlsm`) are never run in the box.
@@ -428,6 +445,7 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `PROXY_PRESETS` | | e.g. `python go` (or use `claude-ide-box preset`) |
 | `UPSTREAM_PROXY` | | `host:port` of a corporate proxy squid should forward to |
 | `AUTO_GUARD` | `1` | re-run `guard` on every wrapper start |
+| `OCR_LANGUAGES` | `eng` | Tesseract languages of the `ocr` profile, e.g. `eng deu chi_sim`; global only (one image for all projects), `setup` rebuilds it |
 
 \* can be overridden per project. The full list is in [`lib/claude-ide-box/common.sh`](lib/claude-ide-box/common.sh)
 (`cb_config_defaults`).
