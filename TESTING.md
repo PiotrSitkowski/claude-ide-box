@@ -39,8 +39,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 236 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 236 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 249 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 249 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
@@ -157,6 +157,8 @@ With the minimum-version check: **59 passed, 0 failed, 0 skipped** without profi
 
 With quickstart, Podman and `--try`: **73 passed, 0 failed, 0 skipped** without profiles (59 on
 `main` at `1b0166a` in the same setup).
+With the pii-airgap hooks on top: **73 passed, 0 failed, 0 skipped** (the hooks add no integration check; they are tested
+with a fake `pii-airgap`).
 
 **Rootful Podman 4.9.3, development sandbox, before the rebase onto the Windows installer** (not
 repeated after the rebase: Podman is not installed in the current sandbox) - **61 passed, 12
