@@ -110,7 +110,7 @@ test_try_apply_applies_changes_and_ends_the_session() {
   [ -x "$PROJECT/run.sh" ] || fail "run.sh lost its execute bit"
   assert_eq "c" "$(cat "$PROJECT/dir/c.txt")"
   # the container is removed before anything is compared or written
-  assert_contains "$(calls | head -n 3)" "rm -f $(base_name)-try"
+  assert_contains "$(calls | sed -n 1,3p)" "rm -f $(base_name)-try"
   assert_contains "$(calls)" "volume rm $(base_name)-try-home"
   assert_file_missing "$(try_root)"
   rm -f "$FAKE_DOCKER_DIR/state"

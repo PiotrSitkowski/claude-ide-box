@@ -102,7 +102,7 @@ test_podman_login_maps_the_host_user() {
   # own path instead: the profile home check runs with the same engine flags.
   FAKE_ENGINE=podman FAKE_ROOTLESS=1 run_cli setup --profile python
   assert_status 0 "$STATUS" "$ERR"
-  assert_contains "$(calls | grep -- '--rm' | head -n 1)" "--userns=keep-id"
+  assert_contains "$(calls | grep -- '--rm' | sed -n 1p)" "--userns=keep-id"
 }
 
 test_docker_name_without_path_is_resolved() {

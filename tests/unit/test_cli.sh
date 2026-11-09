@@ -863,7 +863,7 @@ test_logs_summarise_denied_domains_most_frequent_first() {
   assert_contains "$summary" "denied domains"
   # counts, most frequent first; host names compared case-insensitively
   local first second
-  first="$(printf '%s\n' "$summary" | grep -E '^ +[0-9]+ ' | head -n 1)"
+  first="$(printf '%s\n' "$summary" | grep -E '^ +[0-9]+ ' | sed -n 1p)"
   second="$(printf '%s\n' "$summary" | grep -E '^ +[0-9]+ ' | sed -n 2p)"
   assert_contains "$first" "3"
   assert_contains "$first" "example.com"

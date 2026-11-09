@@ -129,6 +129,13 @@ tests expect to be applied. 12 of 20 runs failed there, with both project paths 
 and no host content copied. The check now reads regular files only (`find -type f`); a deliberate
 leak (`cp -L` instead of `ln -s` in `try apply`) still fails the test.
 
+`test_logs_summarise_denied_domains_most_frequent_first` failed now and then in the `bash:3.2`
+CI job, with no assertion message. A trap on errors showed status 141: `grep ... | head -n 1`
+inside a command substitution, where busybox `grep` was still writing when `head` had left, died of
+SIGPIPE, and under `pipefail` and `set -e` that ended the test. In the `bash:3.2` image it failed 4
+times in 120 runs; with `sed -n 1p`, which reads all its input, 0 in 300. Two other tests of this
+change used the same pattern and were changed the same way.
+
 ### Where they ran
 
 **Development sandbox - 69 passed, 0 failed, 0 skipped** with `CLAUDE_IDE_BOX_IT_PROFILES="python go
