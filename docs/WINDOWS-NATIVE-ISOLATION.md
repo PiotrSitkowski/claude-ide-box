@@ -36,6 +36,26 @@ Notes on the numbers:
 - `git status` is the decisive row: 0.13 s natively against more than a minute through WSL, for
   the same tool and the same files.
 
+### Claude Code's own search (ripgrep), measured 2026-11-09
+
+Claude Code searches with ripgrep, not GNU grep, so the search row above overstates the gap. The
+same repository, from inside a project container on the folder on `C:`, warm cache:
+
+| | Files searched | `C:` from WSL, **9p (default)** | `C:` from WSL, virtiofs | Native Windows |
+|---|---:|---:|---:|---:|
+| `rg -l TODO .` (ignores hidden and `.gitignore`d files) | 4,629 | 2.0-2.6 s | 4.7 s | 0.19 s |
+| `rg -l --hidden TODO .` | 14,056 | 8.1-8.4 s | 15.0-16.6 s | 0.49-0.60 s |
+| **Claude Code's Grep tool** (pattern `TODO`, files with matches; time from the tool call to its result in a `claude -p` session) | as `--hidden` | **9.0 s** | 14.6-15.0 s | - |
+
+- The folder holds 14,066 files (13,350 outside `.git`). ripgrep searches 4,629 of them by default;
+  Claude Code's Grep tool includes hidden files (64 matches against 26), here mostly a hidden
+  `.agent` folder of 8,692 files, so its time matches `rg --hidden`.
+- **The default 9p is the reference: about 9 s per Claude search** on a repository of this size,
+  about 15 times native. GNU grep took 53-163 s there, so ripgrep helps a lot, but reading files
+  across the Windows/WSL boundary stays the bottleneck; on a Mac the same kind of
+  repository took 0.86 s with ripgrep.
+- **virtiofs is not recommended**: slower than 9p for this workload (and experimental).
+
 Native Windows is as fast as the Linux file system or faster, with the files where they already
 are and a single copy of them. The cost is a different isolation model, described below.
 
