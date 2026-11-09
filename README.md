@@ -37,7 +37,7 @@ relying on it.
 
 - [How it works](#how-it-works)
 - [Threat model](#threat-model)
-- [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows with WSL2](#windows-with-wsl2) · [separate IDE profile](#try-it-first-in-a-separate-ide-profile)
+- [Install](#install) - [macOS](#macos) · [Linux](#linux) · [Windows](#windows) · [separate IDE profile](#try-it-first-in-a-separate-ide-profile)
 - [Daily use](#daily-use)
 - [What runs in the box](#what-runs-in-the-box) - [dev servers](#dev-servers-react-vite-next-django-) · [office documents](#office-documents) · [personal data](#personal-data-in-the-project)
 - [Modules](#modules)
@@ -137,6 +137,9 @@ rest of your machine.
 
 ## Install
 
+On Windows, [the installer](#windows) sets everything up; the rest of this section is for macOS,
+Linux and manual installation in WSL.
+
 Prerequisites on every platform: Docker (Desktop or Engine), `git`, and the Claude Code extension
 in your IDE. A Claude subscription (Pro/Max) is the primary path; an API key works too.
 
@@ -215,7 +218,80 @@ places (`/usr/local/bin`, `/opt/homebrew/bin`, `~/.docker/bin`, Docker.app) and 
 3. On native Linux, files Claude creates belong to your UID because the container user is built
    with your UID/GID.
 
-### Windows with WSL2
+### Windows
+
+On Windows the installer brings everything it needs. You do not need Docker Desktop, `git` or a
+terminal.
+
+#### One-click installer
+
+1. Download Claude IDE Box as a ZIP: the release, or **Code > Download ZIP** on GitHub. Extract it.
+2. Double-click `windows\Install Claude IDE Box.cmd`.
+3. Answer two questions in a window: what you use Claude for (office work, programming, or both),
+   and which tools to install. The window shows the disk space each choice needs.
+
+It needs Windows 10 (build 19041 or newer) or Windows 11, virtualization turned on in the BIOS/UEFI
+and 12 GB of free disk space. WSL2 does not need Hyper-V, so the Home editions qualify; so far the
+installer has been tested on Windows 10 Pro. Installation takes 10-30 minutes, mostly building the
+environment Claude works in. The window shows each step, and you can keep working meanwhile. Texts,
+folder and shortcut names follow the Windows language (English and Polish so far).
+
+What it installs and sets up:
+
+| | |
+|---|---|
+| WSL | turns on the Windows components it needs (the computer restarts once, and installation continues after sign-in) and updates WSL |
+| Its own Linux | a separate WSL distribution, `ClaudeIDEBox`: Ubuntu 24.04 from Ubuntu's WSL images, checked against its SHA256 sum. Your other WSL distributions are not touched |
+| Docker Engine | from Ubuntu's archive, inside that distribution. Docker Desktop is not used and not needed |
+| VS Code | installed for the current user if it is missing or too old; the download must carry Microsoft's signature |
+| A VS Code profile | `Claude IDE Box`, with the WSL extension and the Claude Code extension, and the settings that route Claude Code into the box. Other profiles and other editors (Antigravity, Cursor) are left unchanged |
+| Claude IDE Box | inside the distribution: the image with the tools you chose, the proxy, and `guard` |
+| Sign-in | your browser opens once to sign in to Claude |
+| Shortcuts | **Claude** on the desktop (drop a folder on it to open it with Claude), **Projects Claude** (the folders Claude works on), and in the Start menu: settings (change what is installed) and uninstall |
+
+Windows asks for administrator approval (UAC) only for the WSL steps: turning on the Windows
+components, and updating WSL when it is older than the installer needs. On a fresh Windows 10 those
+are two prompts; where WSL is already on and current there are none. Everything else runs as the
+signed-in user.
+
+The installer is also the update and repair tool: running it again keeps the projects, the sign-in
+and the choices. Its logs for IT are `install.log` and `linux-setup.log` in
+`%LOCALAPPDATA%\ClaudeIDEBox`.
+
+#### Uninstall on Windows
+
+Start menu > Claude IDE Box > **Uninstall Claude IDE Box** (or `Install Claude IDE Box.cmd -Uninstall`):
+
+1. The projects folder is copied to `Documents\Projects Claude - <date and time>` first; if that
+   copy fails, nothing is removed.
+2. The `ClaudeIDEBox` distribution is deleted with everything in it: the Linux system, Docker and
+   its images, the sign-in token.
+3. The shortcuts and `%LOCALAPPDATA%\ClaudeIDEBox` are deleted.
+
+What stays on the computer: WSL itself and the Windows components it turned on, VS Code, and the
+`Claude IDE Box` VS Code profile (remove it in VS Code under File > Preferences > Profiles). Folders
+on `C:` that you opened with Claude are yours and are not touched.
+
+#### Folders on C: are slower
+
+Projects in **Projects Claude** live on the Linux file system and are fast (a content search over
+the repository below took 0.2 s there). A folder on `C:` (dropped
+on the **Claude** icon) is reached through WSL's file sharing (9p by default). Documents and small
+projects work well that way, but large repositories are slow. Measured on one repository with 14,000
+files on `C:` (2026-11-09):
+
+| Claude Code's search (ripgrep) | Time |
+|---|---:|
+| Folder on `C:`, from the box (WSL 9p, the default) | about 9 s per search |
+| The same folder, the same search with ripgrep in native Windows, for comparison | about 0.5 s |
+| The same folder, WSL's experimental virtiofs | 14.6-15.0 s |
+
+Keep large repositories in **Projects Claude**. Do not turn on virtiofs: it is experimental and was
+slower than 9p here.
+
+#### Manual installation in WSL (advanced)
+
+For people who already use WSL and Docker and want to set it up themselves:
 
 1. Docker Desktop with the WSL2 backend and integration enabled for your distro, or Docker Engine
    inside the distro.
@@ -514,6 +590,8 @@ Set `CLAUDE_IDE_BOX_DEBUG=1` to mirror the wrapper log on stderr.
 
 restores the extension binaries (`guard --undo`) and removes the scripts. It prints the commands to
 remove the config, the Docker containers, volumes and networks, which it leaves in place on purpose.
+
+Installed with the Windows installer: see [Uninstall on Windows](#uninstall-on-windows).
 
 ## Ecosystem
 
