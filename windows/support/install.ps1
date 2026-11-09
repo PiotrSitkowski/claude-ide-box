@@ -521,15 +521,23 @@ if ($choice.Purpose -eq 'office') {
 $lines += '}'
 $json = ($lines -join "`n") + "`n"
 $existing = if (Test-Path $settingsFile) { [IO.File]::ReadAllText($settingsFile) } else { '' }
+# VS Code may save the file back with CRLF and without the final newline;
+# that is not an edit, so contents are compared without line-ending details.
+function Normalize-Settings([string]$text) { return ($text -replace "`r`n", "`n").Trim() }
 # The file is rewritten only while it is exactly what this installer wrote
 # last time (or empty); a file someone edited is left alone.
 $ours = (-not $existing.Trim()) -or ($existing.Trim() -eq '{}') -or
-  ($state.SettingsHash -and (Get-Sha256 $existing) -eq $state.SettingsHash)
-if ($existing -eq $json) {
+  ($state.SettingsHash -and ((Get-Sha256 (Normalize-Settings $existing)) -eq $state.SettingsHash -or
+    (Get-Sha256 $existing) -eq $state.SettingsHash))
+if ((Normalize-Settings $existing) -ceq (Normalize-Settings $json)) {
+  if ($state.SettingsHash -ne (Get-Sha256 (Normalize-Settings $json))) {
+    $state.SettingsHash = Get-Sha256 (Normalize-Settings $json)
+    Save-State $state
+  }
   Ok (M 'Settings_AlreadyOk')
 } elseif ($ours) {
   [IO.File]::WriteAllText($settingsFile, $json, (New-Object Text.UTF8Encoding $false))
-  $state.SettingsHash = Get-Sha256 $json
+  $state.SettingsHash = Get-Sha256 (Normalize-Settings $json)
   Save-State $state
   Ok (M 'Settings_Written')
 } elseif ($existing -match 'claude-ide-box-exec') {
