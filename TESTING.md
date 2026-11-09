@@ -31,6 +31,7 @@ dependency to install on every runner for no extra coverage.
 | `test_engine_versions.sh` | minimum engine versions: thresholds only in the data file, with CVE and source; Docker Desktop 4.44.2 fails, 4.44.3 warns, 4.97.0 and 4.98.0 pass; Docker Engine 25.0.1, 24.0.8, 23.0.6, 20.10.27 fail, 25.0.2, 24.0.9, 26.1.0, 29.9.2 pass; runc 1.1.11 and 1.0.0-rc95 fail, 1.1.12 passes; suffixes (`29.9.2-rd`, `28.0.4+azure-1`, `1.1.12-0ubuntu2~22.04.1`, `v1.1.14`, `(12345)`) and numeric comparison (4.9.0, 4.100.0); an empty, `unknown`, `dev` or `<no value>` engine version, a missing runc and a Docker Desktop without a readable version (also one recognised only by its linuxkit kernel) fail; `setup` refuses before building, warns below 4.97.0; the wrapper refuses with nothing on stdout and no container, `up` too; `ALLOW_VULNERABLE_DOCKER=1` (global only, 0/1) lets setup and the wrapper run while every `doctor` prints `[RISK]` and still fails; no colour codes off a terminal; Podman reported as not checked |
 | `test_engines.sh` | Docker's run options unchanged; Podman: DNS-less internal network instead of `inhibit_ipv4`, `--read-only-tmpfs=false`, `/dev/shm` tmpfs, `--http-proxy=false`, `notmpcopyup` on masked directories (and not on Docker), CPU count from `.Host.CPUs`, doctor's network check; rootless Podman gets `--userns=keep-id` (also for setup's image check); refused without fail-open: rootless Podman on cgroup v1, a missing `pids` controller, the CNI backend, rootless Docker, a Docker engine that does not enforce limits - no container is created and stdout stays empty; an engine name without a path; every image reference fully qualified |
 | `test_try.sh` | `up --try`: copy mounted at the project's own path in a separate `-try` container and home volume, masks and read-only mounts applied to the copy, secrets (also those reached through an absolute symlink) emptied in the copy, the wrapper switching to the session and resuming it; `try diff`; `try apply`: modifications, additions in new directories, deletions, executable bit, container removed before anything is read, session cleaned up; never writes masked, read-only or nested `.git` paths; conflicts block everything, `--skip-conflicts` applies the rest and keeps Claude's version; identical changes are not conflicts; symlinks applied as links and never followed, also when a directory of the copy is replaced by a link to a host directory; no writes through a symlinked project directory; FIFOs skipped; a deleted directory keeps files the user added; `try discard`, `try end`; no session, no Docker daemon and a copy path with a comma all fail closed; a symlinked cache path works |
+| `test_pii_hooks.sh` | `pii` passes its arguments to `pii-airgap` and fails clearly without it; `up --try --pseudonymise` runs `pii-airgap try-prepare` before the container starts, stores the token instructions, starts nothing and removes the copy when preparation fails or pii-airgap is missing, and is refused without `--try` and on a session already seen in clear text; the wrapper appends the instructions to chat sessions only and never to a plain try session; `try apply` stops the container, then restores, and applies nothing when restoration fails; after `try diff` the restored copy is never started by the wrapper or `up` until `up --try` pseudonymises it again; `try apply`/`discard` delete the token map |
 | `test_install.sh` | install, settings snippet, idempotence, refusing to overwrite foreign files, no sudo, `--uninstall` undoes guard and keeps config, `--prefix` |
 | `test_integration_skip.sh` | the integration suite says SKIPPED without Docker and fails when `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` |
 
@@ -38,8 +39,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 236 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 236 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 249 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 249 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
@@ -84,6 +85,13 @@ tests failed; the 3 that passed were the refusal of a bad `ALLOW_VULNERABLE_DOCK
 colour codes off a terminal" and "the wrapper runs on a current Docker", which code without the
 check also satisfies. A twentieth test, a Docker Desktop recognised only by its linuxkit kernel,
 was added afterwards and run red before its implementation.
+
+The pii-airgap hooks were written the same way: 11 of the 13 tests in `test_pii_hooks.sh` were red
+before the implementation; the two that passed check that a plain try session gets no token
+instructions and that `--pseudonymise` without `--try` is refused, which the old code also did (by
+not knowing the option). The hooks are tested with a fake `pii-airgap`; the real tool's own
+integration suite runs its try flow on a directory laid out like a try copy, but a real
+`up --try --pseudonymise` session with Claude has not been run.
 
 ## Integration tests
 
@@ -149,6 +157,8 @@ With the minimum-version check: **59 passed, 0 failed, 0 skipped** without profi
 
 With quickstart, Podman and `--try`: **73 passed, 0 failed, 0 skipped** without profiles (59 on
 `main` at `1b0166a` in the same setup).
+With the pii-airgap hooks on top: **73 passed, 0 failed, 0 skipped** (the hooks add no integration check; they are tested
+with a fake `pii-airgap`).
 
 **Rootful Podman 4.9.3, development sandbox, before the rebase onto the Windows installer** (not
 repeated after the rebase: Podman is not installed in the current sandbox) - **61 passed, 12
