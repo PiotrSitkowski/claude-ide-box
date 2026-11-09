@@ -302,6 +302,7 @@ More: [SECURITY.md](SECURITY.md), [docs/DESIGN.md](docs/DESIGN.md).
 - [docs/DESIGN.md](docs/DESIGN.md) - architecture, data flow, decisions
 - [docs/MODELS.md](docs/MODELS.md) - NER candidates, licences, languages, what was verified
 - `tools/make-diagrams.py` - regenerates the architecture diagrams (light and dark)
+- [CHANGELOG.md](CHANGELOG.md) - what each release contains
 - [TESTING.md](TESTING.md) - what is tested, where, and what is not
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
