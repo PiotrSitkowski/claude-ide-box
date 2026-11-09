@@ -234,6 +234,38 @@ test_refuses_parent_of_home() {
   assert_file_missing "$FAKE_DOCKER_DIR/run.args"
 }
 
+test_refuses_windows_drives_user_folders_and_system_folders() {
+  export CLAUDE_IDE_BOX_WSL_ROOT="$SANDBOX/mnt"
+  local d
+  for d in c c/Users c/users/Jadzia "c/Users/Jadzia/AppData/Roaming/Mozilla" c/Users/Jadzia/.ssh \
+    c/Windows/System32 "c/Program Files/App" c/ProgramData; do
+    mkdir -p "$SANDBOX/mnt/$d"
+    RUN_DIR="$SANDBOX/mnt/$d" run_wrapper --version
+    assert_nonzero "$STATUS" "$d"
+    assert_contains "$ERR" "refusing to mount" "$d"
+    assert_file_missing "$FAKE_DOCKER_DIR/run.args"
+  done
+}
+
+test_accepts_a_project_folder_on_a_windows_drive() {
+  export CLAUDE_IDE_BOX_WSL_ROOT="$SANDBOX/mnt"
+  mkdir -p "$SANDBOX/mnt/c/Users/Jadzia/Documents/Kadry 2026"
+  RUN_DIR="$SANDBOX/mnt/c/Users/Jadzia/Documents/Kadry 2026" run_wrapper --version
+  assert_status 0 "$STATUS" "$ERR"
+  assert_contains "$(cat "$FAKE_DOCKER_DIR/run.args")" "Kadry 2026"
+}
+
+test_windows_folders_are_not_special_outside_wsl() {
+  # Linux: /mnt/c may be an ordinary disk; nothing changes there.
+  mkdir -p "$SANDBOX/mnt/c/Users/x"
+  unset CLAUDE_IDE_BOX_WSL_ROOT WSL_DISTRO_NAME || true
+  if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+    return 0 # running inside WSL: the check is meant to apply
+  fi
+  RUN_DIR="$SANDBOX/mnt/c/Users/x" run_wrapper --version
+  assert_status 0 "$STATUS" "$ERR"
+}
+
 test_env_passed_by_name_only() {
   CLAUDE_CODE_ENTRYPOINT=claude-vscode MCP_TIMEOUT=5000 CLAUDE_AGENT_SDK_VERSION=1 \
     CLAUDE_CODE_SSE_PORT=12345 CLAUDE_CONFIG_DIR=/x CLAUDE_CODE_TMPDIR=/tmp/x \

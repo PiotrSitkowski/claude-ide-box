@@ -639,6 +639,22 @@ test_doctor_checks_use_terminal_in_profiles() {
   assert_contains "$OUT" "profiles/77aa/settings.json: claudeCode.useTerminal is true"
 }
 
+test_doctor_reads_windows_ide_profiles_on_wsl() {
+  healthy_host
+  export CLAUDE_IDE_BOX_WSL_ROOT="$SANDBOX/mnt"
+  local roaming="$SANDBOX/mnt/c/Users/Jadzia/AppData/Roaming"
+  mkdir -p "$roaming/Code/User/profiles/-4b1e2a" "$roaming/Antigravity/User"
+  printf '{ "editor.fontSize": 12 }\n' >"$roaming/Code/User/settings.json"
+  printf '{ "editor.fontSize": 12 }\n' >"$roaming/Antigravity/User/settings.json"
+  printf '{ "claudeCode.claudeProcessWrapper": "%s", "git.autoRepositoryDetection": false }\n' \
+    "$(wrapper_real)" >"$roaming/Code/User/profiles/-4b1e2a/settings.json"
+  run_cli doctor
+  assert_status 0 "$STATUS" "$OUT"
+  assert_contains "$OUT" "profiles/-4b1e2a/settings.json: claudeProcessWrapper"
+  assert_contains "$OUT" "Antigravity/User/settings.json: claudeCode.claudeProcessWrapper is not set"
+  assert_not_contains "$OUT" "FAIL"
+}
+
 test_doctor_fails_when_no_settings_file_sets_the_wrapper() {
   healthy_host
   ide_settings Code '{ "editor.fontSize": 12 }'
@@ -710,6 +726,56 @@ test_login_capture_directory_is_removed() {
   src="$(grep -o 'src=[^,]*,dst=/run/claude-ide-box-login' "$FAKE_DOCKER_DIR/login.args" | sed 's/^src=//; s/,dst=.*//')"
   [ -n "$src" ] || fail "no capture directory was mounted"
   assert_file_missing "$src"
+}
+
+fake_windows_explorer() {
+  export CLAUDE_IDE_BOX_WSL_ROOT="$SANDBOX/mnt"
+  mkdir -p "$SANDBOX/mnt/c/Windows"
+  cat >"$SANDBOX/mnt/c/Windows/explorer.exe" <<'EOS'
+#!/bin/sh
+printf '%s\n' "$@" >>"$FAKE_DOCKER_DIR/explorer.args"
+exit 1
+EOS
+  chmod +x "$SANDBOX/mnt/c/Windows/explorer.exe"
+}
+
+test_login_opens_the_sign_in_url_in_the_windows_browser_on_wsl() {
+  login_ready
+  fake_windows_explorer
+  FAKE_LOGIN_TOKEN=sk-ant-oat01-x \
+    FAKE_LOGIN_URL='https://claude.ai/oauth/authorize?code=true&client_id=9d1c&state=a%2Fb' \
+    run_cli_tty login || return 0
+  assert_status 0 "$STATUS" "$OUT"
+  assert_eq 'https://claude.ai/oauth/authorize?code=true&client_id=9d1c&state=a%2Fb' \
+    "$(cat "$FAKE_DOCKER_DIR/explorer.args")"
+  assert_contains "$OUT" "right-click"
+}
+
+test_login_does_not_open_other_urls() {
+  login_ready
+  fake_windows_explorer
+  local u
+  for u in 'https://evil.example/claude.ai/x' 'https://claude.ai.evil.example/x' \
+    'https://claude.ai/x"&calc' 'http://claude.ai/x' 'file:///C:/Windows/system32/calc.exe'; do
+    FAKE_LOGIN_TOKEN=sk-ant-oat01-x FAKE_LOGIN_URL="$u" run_cli_tty login || return 0
+    assert_status 0 "$STATUS" "$OUT"
+  done
+  assert_file_missing "$FAKE_DOCKER_DIR/explorer.args"
+}
+
+test_login_token_filter_writes_the_sign_in_url() {
+  [ -n "${TEST_NODE:-}" ] || { echo "SKIPPED: no node"; return 0; }
+  local dir out
+  dir="$SANDBOX/cap"
+  mkdir -p "$dir"
+  out="$("$TEST_NODE" -e '
+const parts = ["Visit https://evil.example/x first\nBrowser didn'"'"'t open? Use the url below:\n\n\u001b[2mhttps://claude.ai/oauth/auth", "orize?code=true&state=Xy_1\u001b[22m\n\nPaste code here: "];
+const { spawn } = require("child_process");
+const p = spawn(process.argv[1], ["-e", require("fs").readFileSync(process.argv[2], "utf8"), process.argv[3]], { stdio: ["pipe", "inherit", "inherit"] });
+(async () => { for (const x of parts) { p.stdin.write(x); await new Promise(r => setTimeout(r, 30)); } p.stdin.end(); })();
+' "$TEST_NODE" "$REPO_DIR/lib/claude-ide-box/login-filter.js" "$dir/token")"
+  assert_contains "$out" "https://claude.ai/oauth/authorize?code=true&state=Xy_1"
+  assert_eq "https://claude.ai/oauth/authorize?code=true&state=Xy_1" "$(cat "$dir/url")"
 }
 
 test_login_token_filter_masks_tokens_split_across_chunks() {

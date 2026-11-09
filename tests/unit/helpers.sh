@@ -31,6 +31,10 @@ EOS
       CLAUDE_* | ANTHROPIC_* | MCP_* | MAX_THINKING_TOKENS) unset "$n" ;;
     esac
   done
+  # On a WSL host the scripts would read the real Windows drives (IDE
+  # settings under /mnt/c/Users); point them at an empty sandbox instead.
+  export CLAUDE_IDE_BOX_WSL_ROOT="$SANDBOX/wsl-drives"
+  mkdir -p "$CLAUDE_IDE_BOX_WSL_ROOT"
   PROJECT="$SANDBOX/work/My Project"
   mkdir -p "$PROJECT"
   WRAPPER="$REPO_DIR/bin/claude-ide-box-exec"

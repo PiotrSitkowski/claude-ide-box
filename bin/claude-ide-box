@@ -377,8 +377,42 @@ cb_store_token() {
   say "token saved to $CB_TOKEN_FILE (mode 600)"
 }
 
+# cb_open_login_url URL - WSL only: open the sign-in URL in the Windows
+# browser, because the default Windows 10 console cannot click links. The URL
+# comes from the container, so it is checked again here; explorer.exe gets it
+# as one argument, with no shell in between. macOS and Linux keep showing it.
+cb_open_login_url() {
+  local url="$1" explorer
+  [ -n "$CB_WSL_ROOT" ] || return 0
+  case "$url" in
+    https://claude.ai/* | https://claude.com/* | https://platform.claude.com/* | https://console.anthropic.com/*) ;;
+    *) return 0 ;;
+  esac
+  case "$url" in
+    *[[:space:]]* | *[[:cntrl:]]* | *'"'* | *"'"* | *'<'* | *'>'* | *\\* | *'`'* | *'^'*) return 0 ;;
+  esac
+  explorer="$CB_WSL_ROOT/c/Windows/explorer.exe"
+  [ -x "$explorer" ] || return 0
+  "$explorer" "$url" >/dev/null 2>&1 </dev/null || true
+}
+
+# cb_login_url_watcher DIR - waits for DIR/url (written by the filter) and
+# opens it once; stops when DIR/done appears.
+cb_login_url_watcher() {
+  local dir="$1" url
+  while :; do
+    if [ -s "$dir/url" ]; then
+      IFS= read -r url <"$dir/url" || true
+      cb_open_login_url "$url"
+      return 0
+    fi
+    [ -e "$dir/done" ] && return 0
+    sleep 1
+  done
+}
+
 cmd_login() {
-  local token=""
+  local token="" watcher="" rc=0
   if [ "${1:-}" = "--token-stdin" ]; then
     IFS= read -r token || true
     cb_store_token "$token"
@@ -409,9 +443,14 @@ cmd_login() {
   say "Starting 'claude setup-token' in a temporary container behind the proxy."
   say "Open the URL it prints in your browser, sign in, and paste the code back."
   say "The token is captured directly; it is not shown and you do not need to copy it."
+  if [ -n "$CB_WSL_ROOT" ]; then
+    say "The sign-in page opens in your Windows browser. To paste the code here, right-click in this window."
+    cb_login_url_watcher "$capture" &
+    watcher=$!
+  fi
   say ""
   # shellcheck disable=SC2016 # $1 is expanded by the container's bash
-  if ! cb_docker run -it --rm \
+  cb_docker run -it --rm \
     --network "$CB_NETWORK_INTERNAL" --dns 127.0.0.1 \
     --cap-drop ALL --security-opt no-new-privileges --read-only \
     --tmpfs /tmp:rw,size=64m --tmpfs "/home/claude:rw,size=64m,uid=$CB_UID,gid=$CB_GID" \
@@ -421,7 +460,12 @@ cmd_login() {
     --env "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" \
     --entrypoint bash "$(cb_image_for_profile base)" -c \
     'set -o pipefail; script -qfec "stty cols 4096 2>/dev/null; claude setup-token" /dev/null | node -e "$1" /run/claude-ide-box-login/token' \
-    _ "$filter"; then
+    _ "$filter" || rc=$?
+  if [ -n "$watcher" ]; then
+    : >"$capture/done"
+    wait "$watcher" 2>/dev/null || true
+  fi
+  if [ "$rc" != 0 ]; then
     rm -rf "$capture"
     cb_die "claude setup-token failed"
   fi
@@ -740,10 +784,14 @@ cb_settings_files() {
       [ -f "$p" ] && printf '%s\n' "$p"
     done
     # WSL2: the IDE runs on Windows; its user settings live under %APPDATA%.
-    if [ -d /mnt/c/Users ]; then
+    if [ -n "$CB_WSL_ROOT" ] && [ -d "$CB_WSL_ROOT/c/Users" ]; then
       local d
-      for d in /mnt/c/Users/*/AppData/Roaming; do
-        [ -d "$d" ] && printf '%s\n' "$d/$app/User/settings.json"
+      for d in "$CB_WSL_ROOT"/c/Users/*/AppData/Roaming; do
+        [ -d "$d" ] || continue
+        printf '%s\n' "$d/$app/User/settings.json"
+        for p in "$d/$app/User/profiles"/*/settings.json; do
+          [ -f "$p" ] && printf '%s\n' "$p"
+        done
       done
     fi
   done

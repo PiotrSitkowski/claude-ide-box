@@ -28,6 +28,65 @@ cb_init_paths() {
   CB_LOCK_DIR="$CB_STATE_DIR/locks"
   CB_PROXY_STATE_DIR="$CB_STATE_DIR/proxy"
   CB_EMPTY_FILE="$CB_STATE_DIR/empty"
+  # WSL2 mounts Windows drives as $CB_WSL_ROOT/c, /d, ... (the automount root
+  # in /etc/wsl.conf; /mnt unless changed there, which CLAUDE_IDE_BOX_WSL_ROOT
+  # then names). Empty outside WSL: on Linux /mnt/d may be an ordinary disk,
+  # and macOS and Linux behave exactly as before.
+  CB_WSL_ROOT="${CLAUDE_IDE_BOX_WSL_ROOT:-}"
+  if [ -z "$CB_WSL_ROOT" ] && cb_is_wsl; then
+    CB_WSL_ROOT=/mnt
+  fi
+}
+
+cb_is_wsl() {
+  [ -n "${WSL_DISTRO_NAME:-}" ] && return 0
+  case "$(cat /proc/sys/kernel/osrelease 2>/dev/null || true)" in
+    *[Mm]icrosoft*) return 0 ;;
+  esac
+  return 1
+}
+
+# cb_refuse_windows_path DIR - on WSL2 the Windows drives are mounted under
+# $CB_WSL_ROOT. A whole drive, a Windows user folder (AppData holds browser
+# profiles and credentials, .ssh keys) or a system folder is never a project.
+# NTFS ignores case, so neither does this check.
+cb_refuse_windows_path() {
+  local d="$1" lc drive tail prof name sub
+  [ -n "$CB_WSL_ROOT" ] || return 0
+  case "$d/" in
+    "$CB_WSL_ROOT"/?/*) ;;
+    *) return 0 ;;
+  esac
+  lc="$(printf '%s' "${d#"$CB_WSL_ROOT"/}" | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')"
+  drive="${lc%%/*}"
+  case "$drive" in
+    [a-z]) ;;
+    *) return 0 ;;
+  esac
+  tail=""
+  case "$lc" in */*) tail="${lc#*/}" ;; esac
+  case "$tail" in
+    "")
+      cb_die "refusing to mount '$d': it is a whole Windows drive (open a project folder in the IDE)" ;;
+    windows | windows/* | "program files" | "program files/"* | "program files (x86)" | \
+      "program files (x86)/"* | programdata | programdata/*)
+      cb_die "refusing to mount '$d': it is a Windows system folder" ;;
+    users | users/*)
+      prof="${tail#users}"
+      prof="${prof#/}"
+      name="${prof%%/*}"
+      sub=""
+      case "$prof" in */*) sub="${prof#*/}" ;; esac
+      if [ -z "$name" ] || [ -z "$sub" ]; then
+        cb_die "refusing to mount '$d': it is a Windows user folder or contains one (open a project folder, e.g. one in Documents)"
+      fi
+      case "$sub" in
+        appdata | appdata/* | .ssh | .ssh/* | .aws | .aws/* | .azure | .azure/* | .gnupg | .gnupg/* | \
+          .docker | .docker/* | .kube | .kube/* | .config | .config/* | .claude | .claude/*)
+          cb_die "refusing to mount '$d': it is inside the Windows user folder's ${sub%%/*}" ;;
+      esac
+      ;;
+  esac
 }
 
 # basename/dirname without the external tools: a name from outside (a
@@ -517,6 +576,7 @@ cb_set_project() {
         "$sensitive"/*) cb_die "refusing to mount '$d': it is inside $sensitive" ;;
       esac
     done
+    cb_refuse_windows_path "$d"
   done
 
   CB_PROJECT_DIR="$dir"
