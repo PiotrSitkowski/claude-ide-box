@@ -6,7 +6,7 @@ All notable changes to pii-airgap are listed here. The format follows
 behaviour, options or the detector's results in ways that need attention when updating; the notes
 say so.
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-11-09
 
 The first release. `pii-airgap --version` prints `0.1.0`. The detector's own version, which keys the
 scan cache, is `3`.
