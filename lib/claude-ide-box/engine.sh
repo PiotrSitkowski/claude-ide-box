@@ -6,8 +6,11 @@
 #
 # Sourced by common.sh. Same portability rules: bash 3.2, BSD/GNU/busybox.
 
+# The data file sits next to this file.
+CB_ENGINE_DIR="${CB_LIB:-${BASH_SOURCE[0]%/*}}"
+
 cb_engine_versions_file() {
-  printf '%s/engine-versions.txt\n' "$CB_LIB"
+  printf '%s/engine-versions.txt\n' "$CB_ENGINE_DIR"
 }
 
 # cb_version_clean STRING - the first dotted number in STRING

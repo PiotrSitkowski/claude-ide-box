@@ -1163,5 +1163,6 @@ cb_env_passthrough() {
   done
 }
 
+# Next to this file, also when it is sourced on its own (without CB_LIB).
 # shellcheck source=lib/claude-ide-box/engine.sh
-. "$CB_LIB/engine.sh"
+. "${CB_LIB:-${BASH_SOURCE[0]%/*}}/engine.sh"
