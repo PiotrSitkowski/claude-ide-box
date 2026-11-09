@@ -188,7 +188,9 @@ test_try_apply_copies_symlinks_as_symlinks() {
   [ -L "$PROJECT/link.txt" ] || fail "link.txt is not a symlink"
   [ -L "$PROJECT/b.txt" ] || fail "b.txt is not a symlink"
   assert_eq "$SANDBOX/hostsecret" "$(readlink "$PROJECT/link.txt")"
-  if grep -rl HOSTSECRET "$PROJECT" 2>/dev/null | grep -q .; then
+  # Regular files only: busybox `grep -r` follows symlinks, and links to the
+  # host file are allowed (they are applied as links, not as content).
+  if find "$PROJECT" -type f -exec grep -l HOSTSECRET {} + 2>/dev/null | grep -q .; then
     fail "a host file's content was copied into the project"
   fi
 }
@@ -299,7 +301,9 @@ test_try_apply_never_reads_through_a_symlinked_directory_in_the_copy() {
   run_cli try diff
   assert_not_contains "$OUT" "HOSTSECRET"
   run_cli try apply --skip-conflicts
-  if grep -rl HOSTSECRET "$PROJECT" 2>/dev/null | grep -q .; then
+  # Regular files only: busybox `grep -r` follows symlinks, and links to the
+  # host file are allowed (they are applied as links, not as content).
+  if find "$PROJECT" -type f -exec grep -l HOSTSECRET {} + 2>/dev/null | grep -q .; then
     fail "a host file's content was copied into the project"
   fi
   assert_eq "HOSTSECRET" "$(cat "$SANDBOX/hostdir/config")"
