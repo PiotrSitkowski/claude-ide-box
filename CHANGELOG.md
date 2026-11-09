@@ -5,7 +5,7 @@ All notable changes to Claude IDE Box are listed here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may change
 behaviour or configuration in ways that need attention when updating; the notes say so.
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-11-09
 
 The first release. `claude-ide-box version` prints `0.1.0`.
 
