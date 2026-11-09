@@ -59,6 +59,9 @@ Current project (the working directory)
   forward PORT [HOST_PORT]    open a dev server running in the container (e.g. 5173)
                               at http://127.0.0.1:HOST_PORT on the host
   status                      show proxy, network and container state
+  pii-scan                    look for personal data with pii-airgap, as before a new
+                              container (no time limit; fills pii-airgap's cache)
+  pii-scan accept|reset       let this project start despite personal data, or undo it
 
 Network
   allow DOMAIN                add DOMAIN (or .DOMAIN for subdomains) to the allowlist
@@ -520,6 +523,54 @@ cmd_up() {
   fi
   cb_ensure_container
   say "$CB_NAME is running for $CB_PROJECT_DIR"
+}
+
+cmd_pii_scan() {
+  project_from_pwd
+  cb_load_config
+  case "${1:-}" in
+    accept)
+      cb_config_set "$CB_PROJECT_CONFIG" PII_ACCEPTED 1
+      say "Accepted for $CB_PROJECT_DIR: sessions start even when pii-airgap finds personal data."
+      say "Everything Claude reads in this project is sent to the AI provider. Undo: claude-ide-box pii-scan reset"
+      return 0
+      ;;
+    reset)
+      cb_config_set "$CB_PROJECT_CONFIG" PII_ACCEPTED 0
+      say "The next new container of $CB_PROJECT_DIR is preceded by a personal-data scan again."
+      return 0
+      ;;
+    "") ;;
+    *) cb_die "usage: claude-ide-box pii-scan [accept|reset]" ;;
+  esac
+  local bin tmp st=0 findings
+  bin="$(cb_pii_airgap)" || cb_die "pii-airgap is not installed (see 'Personal data in the project' in the README)"
+  # Masked files do not count; this only lists them (nothing is created).
+  CB_MOUNTS="$(cb_find_masks "$CB_PROJECT_DIR" | tr '\0' '\n' | awk 'NF { print "file\t" $0 }')"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/claude-ide-box-pii.XXXXXX")" || cb_die "cannot create a temporary directory"
+  say "Scanning $CB_PROJECT_DIR with pii-airgap (no network; results are cached)..."
+  cb_pii_scan_run "$bin" "$tmp/out" "$tmp/err" 0 || st=$?
+  if [ "$st" != 0 ] && [ "$st" != 3 ]; then
+    cat "$tmp/err" >&2
+    rm -rf "$tmp"
+    cb_die "pii-airgap scan failed (status $st)"
+  fi
+  if ! findings="$(cb_pii_scan_findings "$tmp/out")"; then
+    rm -rf "$tmp"
+    cb_die "cannot read pii-airgap's scan report (a file name with a line break?); run 'pii-airgap scan' here to see it"
+  fi
+  rm -rf "$tmp"
+  if [ -z "$findings" ]; then
+    say "No personal data found outside masked files."
+    return 0
+  fi
+  say "Personal data found (files and kinds; the values are never shown):"
+  printf '%s\n' "$findings" | sed 's/^/  /'
+  cb_pii_scan_ways
+  if [ "$CFG_PII_ACCEPTED" = 1 ]; then
+    say "This project is accepted (PII_ACCEPTED=1): its sessions start anyway."
+  fi
+  return 3
 }
 
 cmd_down() {
@@ -1048,6 +1099,7 @@ main() {
     profiles) cmd_profiles "$@" ;;
     guard) cmd_guard "$@" ;;
     doctor) cmd_doctor "$@" ;;
+    pii-scan) cmd_pii_scan "$@" ;;
     *) cb_die "unknown command '$cmd' (see 'claude-ide-box help')" ;;
   esac
 }

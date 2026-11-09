@@ -366,6 +366,7 @@ creates its container (a few seconds); later sessions reuse it.
 | `claude-ide-box up --recreate` | apply changed masks or settings now |
 | `claude-ide-box down` / `rm` | stop / remove this project's container (`rm --volume` also deletes history) |
 | `claude-ide-box doctor` | check the whole setup; non-zero exit on any failure |
+| `claude-ide-box pii-scan` | look for personal data with pii-airgap, as before a new container ([details](#personal-data-in-the-project)) |
 
 > [!NOTE]
 > When a new secret file (say `.env.local`) appears on the host, the next session recreates the
@@ -472,6 +473,29 @@ on your machine with a local model and no network:
 | 1. See what is there | `pii-airgap scan` | which files hold names, IBANs, PESELs, phone numbers..., with confidence; no value is ever printed or cached |
 | 2. Hide whole documents | `pii-airgap mask-add contracts/umowa.docx`, then `claude-ide-box up --recreate` | the file is empty inside the box (the same mask mechanism as `.env`) |
 
+**With pii-airgap installed, Claude IDE Box scans a project before it creates its container** - the
+first session in a new project, and again whenever the container is created anew. The scan runs in
+pii-airgap's own container without network and its results are cached by file content, so a second
+scan of unchanged files takes well under a second. Files Claude IDE Box masks do not count. If
+personal data is found, the session does not start; the IDE panel shows the files and kinds of data
+(never the values) and three ways on:
+
+- hide the files from Claude: `pii-airgap mask-add FILE...` (the next session recreates the container
+  with the masks);
+- work on a pseudonymised copy instead (below);
+- accept it for this project: `claude-ide-box pii-scan accept` writes `PII_ACCEPTED=1` to the
+  project's config outside the project (`claude-ide-box pii-scan reset` undoes it).
+
+A scan that takes longer than `PII_SCAN_TIMEOUT` (60 s) stops the start with a message rather than
+leave the panel waiting; `claude-ide-box pii-scan` runs the same scan in a terminal without a limit
+and fills the cache. A scan that fails (pii-airgap's image not built, for example) also stops the
+start. Without pii-airgap nothing changes. By default only findings with a confidence of at least
+0.8 count (`PII_SCAN_MIN_CONFIDENCE`): checksums, patterns such as e-mail and phone numbers, table
+columns and your own lists, but not a language model's guess alone (0.75), which in source code
+mostly finds class names - on this repository spaCy flagged 65 of 69 files at 0, none at 0.8. So a
+text whose only personal data is names does not stop the start by default; set
+`PII_SCAN_MIN_CONFIDENCE=0` for such a project to count them too.
+
 Both steps work with this version of Claude IDE Box. A third step - letting Claude work on a copy in
 which personal data is replaced by tokens such as `[PERSON_1]` and put back afterwards - is
 proposed in [#3](https://github.com/PiotrSitkowski/claude-ide-box/pull/3).
@@ -570,6 +594,10 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `AUTO_GUARD` | `1` | re-run `guard` on every wrapper start |
 | `OCR_LANGUAGES` | `eng` | Tesseract languages of the `ocr` profile, e.g. `eng deu chi_sim`; global only (one image for all projects), `setup` rebuilds it |
 | `ALLOW_VULNERABLE_DOCKER` | `0` | `1` runs even on an engine with a known container escape (global only; `doctor` shows `[RISK]` and fails) |
+| `PII_SCAN` * | `1` | `0` turns off the personal-data scan before a new container ([details](#personal-data-in-the-project)) |
+| `PII_SCAN_MIN_CONFIDENCE` * | `0.8` | findings below this confidence do not stop a start; `0` counts a model's guesses too |
+| `PII_SCAN_TIMEOUT` | `60` | seconds the scan may take before the start is refused; `0` for no limit |
+| `PII_ACCEPTED` | `0` | per project only: `1` starts despite personal data (`claude-ide-box pii-scan accept`) |
 
 \* can be overridden per project. The full list is in [`lib/claude-ide-box/common.sh`](lib/claude-ide-box/common.sh)
 (`cb_config_defaults`).

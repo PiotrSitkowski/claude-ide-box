@@ -5,6 +5,25 @@ All notable changes to Claude IDE Box are listed here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): before 1.0, a minor version may change
 behaviour or configuration in ways that need attention when updating; the notes say so.
 
+## [Unreleased]
+
+### Security
+
+- **Personal-data scan before a new project container.** With pii-airgap installed, the first
+  session in a project (and every later creation of its container) is preceded by `pii-airgap scan`
+  without network. Personal data in files that are not masked stops the start; the IDE panel shows
+  the files and kinds of data, never the values, and three ways on: mask the files
+  (`pii-airgap mask-add`), work on a pseudonymised copy, or accept the project
+  (`claude-ide-box pii-scan accept`, recorded outside the project). Findings below confidence 0.8
+  (`PII_SCAN_MIN_CONFIDENCE`) do not count, so a language model's guesses in source code do not
+  stop a start; a scan over 60 s (`PII_SCAN_TIMEOUT`), a failed scan or an unreadable report stop it
+  with a message. `PII_SCAN=0` turns it off; without pii-airgap nothing changes.
+
+### Added
+
+- `claude-ide-box pii-scan` runs the same scan in a terminal, without a time limit;
+  `pii-scan accept` and `pii-scan reset` set and clear the acceptance for a project.
+
 ## [0.1.0] - 2026-11-09
 
 The first release. `claude-ide-box version` prints `0.1.0`.
