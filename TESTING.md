@@ -37,8 +37,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 177 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 177 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 202 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 202 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking; the two container-script tests of `COPY_HISTORY` need node and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
@@ -135,8 +135,8 @@ failed, 0 skipped** without profiles, run as UID 30033 with a base image that ha
 throw-away `HOME`, so the Docker client's own proxy configuration does not reach the builds).
 With the minimum-version check: **59 passed, 0 failed, 0 skipped** without profiles (58 on `main` at
 `550788b` in the same setup).
-
-With the read-only `.claude` and `COPY_HISTORY` checks: **@IT@**.
+With the read-only `.claude` and `COPY_HISTORY` checks: **79 passed, 0 failed, 0 skipped** without
+profiles (59 on `main` at `1b0166a` in the same setup).
 Native Docker Engine 29.9.2 on Linux
 (cgroup v1, containerd snapshotter), tests run as an unprivileged user (UID 30033) in the `docker`
 group. That sandbox's network policy differs from a normal machine, so three settings were used,
