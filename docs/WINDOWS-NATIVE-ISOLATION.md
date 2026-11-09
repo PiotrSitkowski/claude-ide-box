@@ -3,6 +3,11 @@
 Status: **proposal, nothing built.** This document decides whether a second Windows backend is
 worth building, next to the WSL2 + Docker backend that ships today.
 
+**Feasibility test, 2026-11-09 ([results](#feasibility-results-2026-11-09)): network and DNS
+isolation - go, with a simpler design than proposed below; Claude Code itself - go; git and a
+shell inside the sandbox - stop.** Without git and a shell a programmer cannot work, so the
+backend is not built in this form.
+
 ## Why
 
 Programmers on Windows keep their repositories on `C:`. The WSL2 backend reaches them through 9p
@@ -119,6 +124,11 @@ should ship its own pinned toolchain under `%LOCALAPPDATA%\ClaudeIDEBox\tools` a
 
 ## Network
 
+> Tested on 2026-11-09: the loopback exemption + firewall approach below does **not** work,
+> because the firewall does not filter loopback. See
+> [results, question 3](#3-can-the-network-proxy-be-bypassed---original-plan-stop-new-variant-go)
+> for the in-container relay and named pipe that replace it.
+
 - The AppContainer gets **no network capabilities** (`internetClient`, `privateNetworkClientServer`
   and the rest), so it has no direct route to the internet or the LAN.
 - To reach the proxy on `127.0.0.1`, the SID needs a **loopback exemption** (`CheckNetIsolation
@@ -173,7 +183,10 @@ should ship its own pinned toolchain under `%LOCALAPPDATA%\ClaudeIDEBox\tools` a
    products and Windows updates can change the outcome; the container's network is a property of
    the container itself. The start-time probe turns this into a failed start instead of a silent
    leak, but the outcome depends on the machine.
-4. **DNS isolation is unknown** until tested (the container has none by construction).
+   (After the test: the relay + named pipe variant does not depend on the firewall, so this point
+   largely goes away.)
+4. **DNS isolation** was unknown before the test; it holds as long as no network capability is
+   granted (see the results).
 5. **No immutable image.** In the container the system is read-only and rebuilt from the image;
    here the toolchain is files on disk, protected by ACLs only.
 6. **Tool parity.** Claude's Bash tool needs Git Bash (Cygwin/MSYS), which may not work in an
@@ -197,7 +210,105 @@ project (a folder under `Projects` in WSL for documents, a repository on `C:` na
 
 Do not build anything until the spike below passes.
 
-## Spike: questions that decide it (3-5 days)
+## Feasibility results (2026-11-09)
+
+Throwaway test tool (C# compiled with the .NET Framework compiler that ships with Windows, about
+250 lines): it starts a process in an AppContainer or LPAC, runs a CONNECT proxy with
+`proxy/allowlist.txt`, and probes network, DNS, devices and named pipes. Machine: Windows 10 Pro
+22H2 19045.6466, Git for Windows 2.35.1, Claude Code 2.1.318 (`claude.exe` from
+downloads.claude.ai, SHA256 checked against the manifest, signature valid). The project was a
+copy of `quanti-platform`; the real repository was not touched. Everything was removed afterwards:
+profiles, ACL entries, the loopback exemption, firewall rules, and the change to the `NUL` device.
+
+### 1. Can DNS be blocked? - GO
+
+| Probe from the AppContainer (no capabilities) | Result |
+|---|---|
+| TCP to 1.1.1.1:443, to the LAN gateway | blocked, `AccessDenied` |
+| UDP DNS query straight to 8.8.8.8 | no answer (time-out) |
+| system resolver (`getaddrinfo`) for `example.com` | fails, even though the host has it cached |
+| system resolver for a unique random name | fails, and **the name never reaches the Windows DNS cache**; the same query from outside the sandbox is cached as an upstream NXDOMAIN (status 9501). The query does not leave the machine. |
+
+The same holds with the loopback exemption and firewall rules in place.
+
+**Condition:** the AppContainer must never get a network capability. With `internetClient`
+granted and firewall rules blocking all of its traffic, a unique name *was* resolved upstream:
+the DNS Client service sends the query on the sandbox's behalf, and the firewall rules for the
+package do not apply to that service.
+
+### 2. Does Claude Code with git and search work in an AppContainer? - Claude Code: GO; git and shell: STOP
+
+| Tool | AppContainer | LPAC |
+|---|---|---|
+| `claude.exe --version` | works | works |
+| a real `claude -p` session (Grep, Glob, Read tools, through the proxy) | works: 27 s with the model's answer, only `api.anthropic.com` in the proxy log | not tried |
+| ripgrep (14k-file project) | `--files` 0.12-0.25 s, search 0.46-0.66 s; outside the sandbox 0.44 s | works, same speed |
+| reading `~\.gitconfig`, listing `source\repos` | denied (as intended) | denied |
+| writing in the project | works after the project is labelled Low integrity (`icacls /setintegritylevel (OI)(CI)low`); without the label every write is denied | - |
+| Git for Windows | **fails at start**: `could not open '/dev/null'` | fails: `Program Files` is not readable |
+| Git Bash (MSYS2/Cygwin) | **fails**: `NtCreateDirectoryObject` fatal error (Cygwin cannot create its object directory in the AppContainer's namespace) | fails |
+| Windows PowerShell 5.1 (Claude Code's shell when Git Bash is missing) | starts, but its file system provider cannot initialise (`C:\` not readable), so no paths work | - |
+| .NET Framework programs | work | do not start |
+
+Why git fails:
+
+1. The `NUL` device on this build has the DACL
+   `D:(A;;0x1201bf;;;WD)(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;RC)`: no entry for "ALL APPLICATION
+   PACKAGES", so `CreateFile("NUL")` returns error 5 in any AppContainer. Git opens `/dev/null`
+   on every start. With an `AC` entry added to the device (administrator, system-wide, lost at
+   every reboot) `git --version` works.
+2. Even then `git status` stops with `Unable to read current working directory: Permission
+   denied`. Granting traverse and read-attributes on every parent folder inside the profile did
+   not help; most likely the path normalisation lists every parent up to `C:\`, which would mean
+   granting directory listings of `C:\`, `C:\Users` and the profile (administrator for the first
+   two). Not pursued further.
+
+Open: Claude Code's Grep tool reported hitting its time limit inside the sandbox, although
+ripgrep run directly took 0.5 s. Unexplained.
+
+Claude Code itself works. Its file tools (Read, Edit, Write, Grep, Glob) run inside its own
+process. Git, the shell, and everything a programmer runs through it (tests, builds, package
+managers) do not, unless the system is changed globally or each tool gets a broker outside the
+sandbox. Node, npm and Python were not tested.
+
+### 3. Can the network proxy be bypassed? - original plan: STOP; new variant: GO
+
+| Setup | Proxy | Other local port (a "dev database") | Internet, LAN, UDP |
+|---|---|---|---|
+| no exemption | unreachable | unreachable | blocked |
+| loopback exemption (admin) | reachable, allowlist enforced (`api.anthropic.com` 200, `example.com` 403) | **reachable** | blocked |
+| exemption + firewall rules for the SID blocking every TCP port but the proxy's | reachable | **still reachable** | blocked |
+
+**Windows Firewall does not filter loopback traffic.** A loopback exemption therefore opens every
+local service to the sandbox, and firewall rules cannot narrow it. The firewall rules do apply to
+the package off loopback: even with `internetClient` granted, 1.1.1.1:443 stayed blocked.
+
+A variant without exemption, firewall rules or administrator rights, whose two halves were each
+verified (not built end to end):
+
+- **Loopback inside one AppContainer works without an exemption.** A listener in container B was
+  reachable from another process in B, but not from container A or from outside. Host ports
+  stayed unreachable from B.
+- **A named pipe with a DACL for one SID** is reachable from that AppContainer and refused to
+  another one (no Low integrity label needed).
+
+So: a small relay inside the sandbox listens on `127.0.0.1` (`HTTPS_PROXY` points to it) and
+forwards over a named pipe, open only to this project's SID, to the allowlisting proxy on the
+Windows side. Nothing else on the machine is reachable, and none of it depends on the firewall
+configuration or on company policy.
+
+### Verdict
+
+Network and DNS isolation are feasible and simpler than proposed above: no administrator rights,
+no firewall rules. The toolchain is the blocker. Git for Windows, Git Bash and Windows PowerShell
+are not built to run in an AppContainer, and making them work means system-wide changes (the `NUL`
+device ACL on every boot, listings of `C:\` and `C:\Users`), or brokers that run tools outside
+the sandbox and weaken it. **Stop** the native backend in this form.
+
+Worth one more check before closing it for good: the same tests on Windows 11 (the `NUL` device
+ACL and git's start-up may differ) and with Node and Python.
+
+## Spike plan (done; results above)
 
 Each is a small test program, thrown away afterwards.
 
