@@ -166,6 +166,31 @@ class TreeTests(unittest.TestCase):
         self.assertIn("contracts/umowa.docx", str(cm.exception))
         self.assertEqual(read(os.path.join(self.root, "a.txt")), "Jan Kowalski, PESEL 44051401359\n")
 
+    def test_anonymise_leaves_out_documents_it_cannot_rewrite(self):
+        # From the first test on Windows: a DOCX with personal data blocked the
+        # whole copy, and the advice to mask it did not help.
+        write(os.path.join(self.root, "contracts/umowa.docx"), b"PK\x03\x04 Jan Kowalski", "wb")
+        write(os.path.join(self.root, "legacy.txt"), "Pan Jan Kowalski z Łodzi\n".encode("cp1250"), "wb")
+        rep = anonymise_tree(self.root, self.map, self.d, git="strip", leave_out=True,
+                             documents_with_pii=[("contracts/umowa.docx", "DOCX document")])
+        self.assertFalse(os.path.exists(os.path.join(self.root, "contracts/umowa.docx")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "legacy.txt")))
+        self.assertEqual([rel for rel, _ in rep.left_out], ["contracts/umowa.docx", "legacy.txt"])
+        self.assertEqual(dict(rep.left_out)["contracts/umowa.docx"], "DOCX document")
+        self.assertIn("not UTF-8", dict(rep.left_out)["legacy.txt"])
+        self.assertEqual(read(os.path.join(self.root, "a.txt")), "[PERSON_1], PESEL [PESEL_1]\n")
+
+    def test_anonymise_leaves_nothing_out_when_it_refuses(self):
+        from pii_airgap.tokens import Unrewritable
+        write(os.path.join(self.root, "umowa.docx"), b"PK\x03\x04", "wb")
+        write(os.path.join(self.root, "44051401359.txt"), "x\n")
+        with self.assertRaises(Unrewritable) as cm:
+            anonymise_tree(self.root, self.map, self.d, git="strip", leave_out=True,
+                           documents_with_pii=["umowa.docx"])
+        self.assertNotIn("mask", str(cm.exception))
+        self.assertTrue(os.path.exists(os.path.join(self.root, "umowa.docx")))
+        self.assertEqual(read(os.path.join(self.root, "a.txt")), "Jan Kowalski, PESEL 44051401359\n")
+
     def test_symlinks_are_never_followed(self):
         outside = os.path.join(self.tmp.name, "outside.txt")
         write(outside, "Jan Kowalski\n")

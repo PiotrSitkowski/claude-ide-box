@@ -14,7 +14,7 @@ from . import __version__
 from .detect import Detector, parse_list_file
 from .ner import load_backend
 from .scan import scan_tree
-from .tokens import TokenCollision, Unrewritable, anonymise_tree, restore_tree, verify_tree
+from .tokens import UNREWRITABLE, TokenCollision, Unrewritable, anonymise_tree, restore_tree, verify_tree
 
 TEXT_METHODS = ("text", "text-cp1250")
 
@@ -37,6 +37,11 @@ Treat every such token as an opaque, immutable identifier:
   not use the [TYPE_N] syntax.
 A token that is altered cannot be restored and will be reported to the user.
 """
+
+
+def _safe(name):
+    """A file name from the copy, with control characters made visible."""
+    return "".join(c if c.isprintable() else "?" for c in name)
 
 
 def _die(msg, status=1):
@@ -110,13 +115,19 @@ def cmd_anonymise(args):
     if args.scan_report:
         with open(args.scan_report, encoding="utf-8") as f:
             rep = json.load(f)
-        docs = [x["path"] for x in rep.get("files", []) if x.get("method") not in TEXT_METHODS]
-        docs += ["%s (could not be scanned: %s)" % (x["path"], x["error"]) for x in rep.get("errors", [])]
+        docs = [(x["path"], "%s %s" % (x.get("method", "?").upper(), UNREWRITABLE))
+                for x in rep.get("files", []) if x.get("method") not in TEXT_METHODS]
+        docs += [(x["path"], "could not be scanned: %s" % x["error"]) for x in rep.get("errors", [])]
     try:
-        r = anonymise_tree(args.root, args.map, det, git=args.git, documents_with_pii=docs)
+        r = anonymise_tree(args.root, args.map, det, git=args.git, documents_with_pii=docs,
+                           leave_out=args.leave_out)
     except (TokenCollision, Unrewritable) as e:
         _die(str(e), 3)
     sys.stderr.write("pii-airgap: pseudonymised %d file(s)\n" % len(r.changed))
+    if r.left_out:
+        sys.stderr.write("pii-airgap: left out of the copy (deleted from it, so Claude never sees them):\n")
+        for rel, why in r.left_out:
+            sys.stderr.write("  %s: %s\n" % (_safe(rel), why))
     for rel in r.changed:
         sys.stdout.write("%s\n" % rel)
     return 0
@@ -192,6 +203,8 @@ def main(argv=None):
     a.add_argument("--map", required=True)
     a.add_argument("--git", choices=("refuse", "strip"), default="refuse")
     a.add_argument("--scan-report", help="scan --json output; documents with PII in it block the run")
+    a.add_argument("--leave-out", action="store_true",
+                   help="delete documents that cannot be rewritten from the tree (a copy) instead of refusing")
 
     r = sub.add_parser("restore", help="put real values back for exact known tokens")
     r.add_argument("root")

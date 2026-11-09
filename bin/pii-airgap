@@ -44,6 +44,8 @@ Usage: pii-airgap <command> [arguments]
   anonymise DIR --map FILE [--git strip]
                         replace personal data in DIR by [TYPE_N] tokens, in
                         place (use it on a copy); FILE keeps the token map.
+                        Documents with personal data it cannot rewrite
+                        (DOCX, PDF, scans...) are deleted from DIR and listed.
                         The copy is recorded so that Claude IDE Box can check
                         it before every start
   restore COPY --map FILE (--out NEW_DIR | --base ORIGINAL --into-base)
@@ -330,11 +332,15 @@ cmd_scan() {
   return "$rc"
 }
 
-# pseudonymise SRC DST MAPDIR MAPNAME - scan SRC (mounted read-only at DST,
-# no map in sight), then pseudonymise it with the map in MAPDIR. Documents
-# with PII that cannot be rewritten stop the second step.
+# pseudonymise SRC DST MAPDIR MAPNAME [leave-out] - scan SRC (mounted
+# read-only at DST, no map in sight), then pseudonymise it with the map in
+# MAPDIR. Documents with PII that cannot be rewritten stop the second step,
+# or with "leave-out" are deleted from SRC (a copy made for this purpose).
+# A try copy never leaves anything out: 'try apply' would carry the deletion
+# back into the original.
 pseudonymise() {
-  local src="$1" dst="$2" mapdir="$3" mapname="$4" report rc=0
+  local src="$1" dst="$2" mapdir="$3" mapname="$4" mode="${5:-}" report rc=0 leave=()
+  [ "$mode" != leave-out ] || leave=(--leave-out)
   add_lists "$src"
   require_engine
   private_dir "$PA_CACHE_DIR"
@@ -355,11 +361,15 @@ pseudonymise() {
   mount_ro "$report" /report.json
   [ ${#LIST_ARGS[@]} -eq 0 ] || mount_ro "$(abs_path "$PA_LISTS_DIR")" /lists
   run_container anonymise "$dst" --map "/state/$mapname" --git strip --scan-report /report.json \
-    ${LIST_ARGS[@]+"${LIST_ARGS[@]}"} >&2 || rc=$?
+    ${leave[@]+"${leave[@]}"} ${LIST_ARGS[@]+"${LIST_ARGS[@]}"} >&2 || rc=$?
   rm -f "$report"
   if [ "$rc" -eq 3 ]; then
-    say "Mask the files listed above in Claude IDE Box ('pii-airgap mask-add FILE...'), or remove them,"
-    say "then start again. Nothing was changed."
+    if [ "$mode" = leave-out ]; then
+      say "Rename the files listed above, or remove them from the copy, then start again. Nothing was changed."
+    else
+      say "Mask the files listed above in Claude IDE Box ('pii-airgap mask-add FILE...'), or remove them,"
+      say "then start again. Nothing was changed."
+    fi
   fi
   return "$rc"
 }
@@ -467,7 +477,7 @@ cmd_anonymise() {
   if [ "$git" != strip ] && [ -e "$dir/.git" ]; then
     die "$dir has git metadata, whose history holds the original values; work on a copy and pass --git strip"
   fi
-  pseudonymise "$dir" "$dir" "$MAP_DIR" "$MAP_NAME"
+  pseudonymise "$dir" "$dir" "$MAP_DIR" "$MAP_NAME" leave-out
   record_copy "$dir" "$MAP_DIR/$MAP_NAME"
 }
 

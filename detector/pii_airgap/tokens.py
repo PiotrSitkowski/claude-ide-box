@@ -168,6 +168,7 @@ def restore_text(text, tmap, baseline=None):
 class Report(object):
     def __init__(self):
         self.changed, self.problems, self.skipped, self.written = [], [], [], False
+        self.left_out = []  # (rel, reason): removed from the copy, never pseudonymised
 
 
 def _walk(root):
@@ -234,21 +235,37 @@ def _rmtree(path):
     os.rmdir(path)
 
 
-def anonymise_tree(root, map_path, detector, git="refuse", documents_with_pii=()):
+UNREWRITABLE = "document with personal data that cannot be rewritten in place"
+
+
+def anonymise_tree(root, map_path, detector, git="refuse", documents_with_pii=(), leave_out=False):
     """Replace PII in every UTF-8 text file below root by tokens, in place.
-    Everything is planned first; on any refusal nothing is written."""
+    Everything is planned first; on any refusal nothing is written.
+
+    documents_with_pii: paths (or (path, reason) pairs) the caller's scan
+    found personal data in but that are not text. They block the run, unless
+    leave_out is set: then they, and text files that are not UTF-8 but look
+    like they hold personal data, are deleted from the tree (it must be a
+    copy) and listed in the report's left_out."""
     tmap = TokenMap.load_or_new(map_path)
     files, gits, links = _walk(root)
     rep = Report()
     blockers = []
+    left = {}
     if gits and git != "strip":
         blockers.append("git metadata (history holds the original values and cannot be rewritten): "
                         + ", ".join(gits))
     for d in documents_with_pii:
-        blockers.append("%s: document with PII that cannot be rewritten in place (mask it)" % d)
+        rel, why = (d, UNREWRITABLE) if isinstance(d, str) else d
+        if leave_out:
+            left[rel] = why
+        else:
+            blockers.append("%s: %s (mask it)" % (rel, why))
     collisions = []
     planned = []
     for rel, path in files:
+        if rel in left:
+            continue
         for f in detector.detect(rel):
             if f.source not in LINK_TYPES:
                 blockers.append("%s: the file name contains %s" % (rel, f.type))
@@ -258,6 +275,9 @@ def anonymise_tree(root, map_path, detector, git="refuse", documents_with_pii=()
                 with open(path, "rb") as fh:
                     alt = fh.read().decode("cp1250", errors="replace")
                 if detector.detect(alt):
+                    if leave_out:
+                        left[rel] = "not UTF-8 text and looks like it holds personal data"
+                        continue
                     blockers.append("%s: not UTF-8 and looks like it holds PII (convert it or mask it)" % rel)
             rep.skipped.append((rel, why))
             continue
@@ -279,6 +299,13 @@ def anonymise_tree(root, map_path, detector, git="refuse", documents_with_pii=()
         raise Unrewritable("refusing to pseudonymise, nothing was changed:\n  " + "\n  ".join(blockers))
     for g in gits:
         _rmtree(os.path.join(root, g))
+    present = dict(files)
+    for rel in sorted(left):
+        # Only regular files found by the walk are removed; a path that is
+        # not one (gone, or inside .git, already stripped) has nothing left.
+        if rel in present:
+            os.unlink(present[rel])
+            rep.left_out.append((rel, left[rel]))
     for rel, path, new in planned:
         _write_atomic(path, new)
         rep.changed.append(rel)

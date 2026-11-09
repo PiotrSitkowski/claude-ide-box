@@ -168,6 +168,8 @@ test_try_prepare_scans_then_pseudonymises() {
   assert_contains "$second" "type=bind,src=$XDG_STATE_HOME/pii-airgap/try,dst=/state|"
   assert_contains "$second" "dst=/report.json,readonly"
   assert_contains "$second" "|anonymise|$T/proj|--map|/state/$name.map.json|--git|strip|--scan-report|/report.json"
+  # 'try apply' would carry a deletion back into the original
+  assert_not_contains "$second" "--leave-out"
   # shellcheck disable=SC2012 # only the mode string of one known directory
   perm="$(ls -ld "$XDG_STATE_HOME/pii-airgap/try" | cut -c1-10)"
   assert_eq "$perm" "drwx------"
@@ -307,6 +309,21 @@ test_anonymise_with_a_shared_map_updates_every_record() {
   FAKE_DOCKER_RUN_OUT='{"files": []}' pa anonymise "$T/copy2" --map "$T/private/map.json" >/dev/null 2>&1 || fail "anonymise failed"
   assert_contains "$(cat "$(copy_record "$T/copy")")" "map_sha256=$(sha_of "$T/private/map.json")"
   assert_contains "$(cat "$(copy_record "$T/copy2")")" "map_sha256=$(sha_of "$T/private/map.json")"
+}
+
+test_anonymise_leaves_out_documents_and_never_advises_masking() {
+  anonymised_copy
+  make_project "$T/copy2"
+  : >"$FAKE_DOCKER_LOG"
+  FAKE_DOCKER_RUN_OUT='{"files": []}' pa anonymise "$T/copy2" --map "$T/private/map.json" >/dev/null 2>&1 ||
+    fail "anonymise failed"
+  assert_contains "$(docker_runs | sed -n 2p)" "|--scan-report|/report.json|--leave-out"
+  : >"$FAKE_DOCKER_LOG"
+  set +e
+  out="$(FAKE_DOCKER_RUN_OUT='{"files": []}' FAKE_DOCKER_FAIL_RUN=2 pa anonymise "$T/copy2" --map "$T/private/map.json" 2>&1)"
+  set -e
+  assert_contains "$out" "Nothing was changed"
+  assert_not_contains "$out" "mask"
 }
 
 test_a_failed_anonymise_records_nothing() {

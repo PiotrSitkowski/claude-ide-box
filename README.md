@@ -214,10 +214,12 @@ it is your own folder, protected by its masks as before.
 record once the copy is gone. The check also catches files `anonymise` cannot rewrite but that still
 hold a known value (a binary file of unknown type, for example) - mask or remove those.
 
-`anonymise` refuses (exit 3, nothing changed) when it would be unsafe: git metadata (its history
-holds the original values and cannot be rewritten), a document with personal data that it cannot
-rewrite in place (DOCX, PDF, scans... - mask or remove those), personal data in a file name, a
-non-UTF-8 text file that seems to hold personal data, or text that already looks like a token.
+Documents with personal data that `anonymise` cannot rewrite in place (DOCX, PDF, scans...), files
+the scan could not read, and non-UTF-8 text files that seem to hold personal data are left out of
+the copy: they are deleted from it, and the report names each one with the reason. The original
+keeps them. `anonymise` refuses (exit 3, nothing changed, nothing left out) when it would be unsafe:
+git metadata (its history holds the original values and cannot be rewritten), personal data in a
+file name, or text that already looks like a token.
 
 ### With Claude IDE Box
 
@@ -287,7 +289,7 @@ fictional data that does not look like a token when examples are needed.
 | a malicious PDF or Office file exploits a parser | the scanner has no network, no token map, the project read-only, no capabilities, your UID, memory and process limits |
 | the token map leaks to the agent | it lives in `~/.local/state/pii-airgap/` (directory 700, file 600) and is never mounted into the agent's container or the scanner |
 | the agent edits what is looked for | your lists must live outside every scanned folder |
-| a document cannot be pseudonymised | DOCX, PDF and scans with personal data stop the session until they are masked |
+| a document cannot be pseudonymised | `anonymise` leaves DOCX, PDF and scans with personal data out of the copy and names them; in a try session they stop the session until they are masked (deleting them from the try copy would delete the originals on `try apply`) |
 | git history keeps the original values | `.git` is refused, or removed from the copy in a try session |
 | a model fails to load and finds nothing | the run fails; a missing model never turns into "no names found" |
 | a token restores to the wrong value | exact match only; near misses are reported and nothing is written |

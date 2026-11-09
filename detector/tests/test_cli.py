@@ -127,6 +127,24 @@ class CliTests(unittest.TestCase):
         self.assertIn("x.docx", r.stderr)
         self.assertNotIn("a.txt", r.stderr)
 
+    def test_anonymise_leaves_out_documents_from_scan_report(self):
+        write(os.path.join(self.root, "x.docx"), "PK")
+        write(os.path.join(self.root, "y.pdf"), "%PDF")
+        rep = os.path.join(self.tmp.name, "scan.json")
+        with open(rep, "w") as f:
+            json.dump({"files": [{"path": "x.docx", "method": "docx", "counts": {"PERSON": 1}},
+                                 {"path": "a.txt", "method": "text", "counts": {"PESEL": 1}}],
+                       "errors": [{"path": "y.pdf", "error": "timeout"}]}, f)
+        r = run("anonymise", self.root, "--map", os.path.join(self.tmp.name, "m.json"), "--scan-report", rep,
+                "--leave-out", "--lists", self.lists)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("x.docx: DOCX document with personal data", r.stderr)
+        self.assertIn("y.pdf: could not be scanned: timeout", r.stderr)
+        self.assertNotIn("mask", r.stderr.lower())
+        self.assertFalse(os.path.exists(os.path.join(self.root, "x.docx")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "y.pdf")))
+        self.assertEqual(r.stdout, "a.txt\n")
+
     def test_system_prompt(self):
         r = run("system-prompt")
         self.assertEqual(r.returncode, 0)

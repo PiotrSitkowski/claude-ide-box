@@ -68,9 +68,9 @@ and writes only when nothing blocks:
 | Blocks | Why |
 |---|---|
 | `.git` anywhere (unless `--git strip`) | history and packed objects hold the original values |
-| a document with PII (from the scan report) | cannot be rewritten in place: mask it |
+| a document with PII (from the scan report) | cannot be rewritten in place. With `--leave-out` (what `pii-airgap anonymise` passes) it is deleted from the copy and listed instead; a try copy never leaves anything out, since `try apply` would delete the original |
 | PII in a file name (checksum, pattern or list) | names are visible to the agent; renaming would break `try apply` |
-| non-UTF-8 text that seems to hold PII | it could only be rewritten by guessing the encoding |
+| non-UTF-8 text that seems to hold PII | it could only be rewritten by guessing the encoding; left out like a document with `--leave-out` |
 | token-shaped text already in a file | restoration could not tell it from a token |
 
 Files are replaced atomically (temporary file in the same directory, same mode, `rename`). The map
