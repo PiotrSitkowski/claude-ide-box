@@ -18,7 +18,7 @@ jobs:
           shellcheck --version
           shellcheck -x bin/claude-ide-box bin/claude-ide-box-exec install.sh \
             lib/claude-ide-box/*.sh image/create-user.sh proxy/entrypoint.sh \
-            tests/*.sh tests/unit/*.sh tests/unit/fake-bin/docker tests/integration/*.sh
+            tests/*.sh tests/unit/*.sh tests/unit/fake-bin/docker tests/integration/*.sh tests/perf/*.sh
 
   unit:
     name: unit (${{ matrix.name }})
