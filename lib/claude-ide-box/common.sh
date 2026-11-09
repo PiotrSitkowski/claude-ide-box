@@ -300,7 +300,7 @@ CB_CONFIG_KEYS="SUBNET PROXY_IP UPSTREAM_PROXY PROXY_PRESETS PROFILE BUILD_PROFI
 CLAUDE_CODE_VERSION BASE_IMAGE PROXY_BASE_IMAGE BUILD_NETWORK MEMORY CPUS PIDS_LIMIT
 TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS READONLY_DEFAULTS READONLY GIT_WRITABLE
 NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS AUTO_GUARD CONTAINER_UID CONTAINER_GID
-EXTENSION_DIRS OCR_LANGUAGES"
+EXTENSION_DIRS OCR_LANGUAGES ALLOW_VULNERABLE_DOCKER"
 
 # Keys a per-project file may override. Network and build settings are global.
 CB_PROJECT_KEYS="PROFILE MEMORY CPUS PIDS_LIMIT TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS
@@ -335,6 +335,8 @@ cb_config_defaults() {
   CFG_CONTAINER_UID=""
   CFG_CONTAINER_GID=""
   CFG_EXTENSION_DIRS=""
+  # Global only: run on an engine with a known container escape.
+  CFG_ALLOW_VULNERABLE_DOCKER="0"
 }
 
 cb_word_in() {
@@ -414,6 +416,10 @@ cb_validate_config() {
   esac
   case "$CFG_GIT_WRITABLE$CFG_NONESSENTIAL_TRAFFIC$CFG_CLAUDEAI_CONNECTORS$CFG_AUTO_GUARD" in
     *[!01]*) cb_die "GIT_WRITABLE, NONESSENTIAL_TRAFFIC, CLAUDEAI_CONNECTORS and AUTO_GUARD must be 0 or 1" ;;
+  esac
+  case "$CFG_ALLOW_VULNERABLE_DOCKER" in
+    0 | 1) ;;
+    *) cb_die "ALLOW_VULNERABLE_DOCKER must be 0 or 1" ;;
   esac
 }
 
@@ -1080,6 +1086,8 @@ cb_ensure_container() {
   cb_pii_check
   cb_require_profiles "$CFG_PROFILE"
   image="$(cb_image_for_profile "$CFG_PROFILE")"
+  # Never start a container on an engine with a known container escape.
+  cb_engine_enforce
 
   cb_lock "$CB_NAME"
   if ! image_id="$(cb_docker image inspect --format '{{.Id}}' "$image" 2>/dev/null)"; then
@@ -1178,3 +1186,7 @@ cb_env_passthrough() {
     printf '%s\n' "$name"
   done
 }
+
+# Next to this file, also when it is sourced on its own (without CB_LIB).
+# shellcheck source=lib/claude-ide-box/engine.sh
+. "${CB_LIB:-${BASH_SOURCE[0]%/*}}/engine.sh"

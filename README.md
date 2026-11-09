@@ -150,6 +150,25 @@ Docker is the boundary, so its version matters
 
 `docker version` shows both (`Server: Docker Desktop 4.x` and `Engine: Version`).
 
+> [!IMPORTANT]
+> **Minimum Docker versions are enforced.** A container is only as strong as the engine that runs
+> it, so `setup`, every container start (the wrapper, `up`, `shell`, `login`) and `doctor` refuse
+> an engine with a known container escape:
+>
+> | Component | Refused below | Advisory |
+> |---|---|---|
+> | Docker Desktop | 4.44.3 | CVE-2025-9074 |
+> | Docker Engine | 25.0.2 (24.0.9 on the 24.0 line) | CVE-2024-21626 |
+> | runc | 1.1.12 | CVE-2024-21626 |
+>
+> Below Docker Desktop 4.97.0, the release with the most recent container isolation fix in Docker's
+> security announcements, `setup` and `doctor` warn. A version that cannot be read counts as
+> vulnerable. The thresholds, with their sources, are in
+> [`lib/claude-ide-box/engine-versions.txt`](lib/claude-ide-box/engine-versions.txt). Podman is not
+> checked; `doctor` says so. To run anyway on a vulnerable engine, put
+> `ALLOW_VULNERABLE_DOCKER=1` in the global config - every `doctor` then prints a `[RISK]` line,
+> and still fails.
+
 ```bash
 git clone https://github.com/PiotrSitkowski/claude-ide-box.git
 ```
@@ -473,6 +492,7 @@ lines; it is parsed, never sourced, and unknown keys are an error. Per-project o
 | `UPSTREAM_PROXY` | | `host:port` of a corporate proxy squid should forward to |
 | `AUTO_GUARD` | `1` | re-run `guard` on every wrapper start |
 | `OCR_LANGUAGES` | `eng` | Tesseract languages of the `ocr` profile, e.g. `eng deu chi_sim`; global only (one image for all projects), `setup` rebuilds it |
+| `ALLOW_VULNERABLE_DOCKER` | `0` | `1` runs even on an engine with a known container escape (global only; `doctor` shows `[RISK]` and fails) |
 
 \* can be overridden per project. The full list is in [`lib/claude-ide-box/common.sh`](lib/claude-ide-box/common.sh)
 (`cb_config_defaults`).
@@ -491,6 +511,7 @@ auto-updater is disabled inside the container on purpose - versions change only 
 
 | Symptom | Cause and fix |
 |---|---|
+| `refusing to run on this container engine: ... CVE-...` | your Docker Desktop, Docker Engine or runc has a known container escape; update it (Docker Desktop: Check for updates; Linux: your distribution's or Docker's packages) |
 | Panel says the process exited immediately | `claude-ide-box logs` - the wrapper log has the reason. Most often Docker is not running. |
 | `image claude-ide-box/base:latest not found` | run `claude-ide-box setup` |
 | `refusing to mount ...: it is the home directory` | the IDE has no folder open, or you opened `~`. Open a project folder. |

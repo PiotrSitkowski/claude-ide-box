@@ -45,7 +45,10 @@ do one of these:
   project content Claude reads, which goes to the Anthropic API. To reduce the personal data in it,
   see [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap).
 - Container escapes through kernel or container runtime bugs - report those upstream (Docker,
-  runc, containerd, the kernel). A Claude IDE Box configuration that makes such a bug reachable when it
+  runc, containerd, the kernel). Known ones are refused: claude-ide-box will not set up or start a
+  container on a Docker Desktop, Docker Engine or runc version listed in
+  `lib/claude-ide-box/engine-versions.txt` (unless `ALLOW_VULNERABLE_DOCKER=1`); a way around that
+  check *is* in scope. A Claude IDE Box configuration that makes such a bug reachable when it
   otherwise would not be *is* in scope.
 - The IDE extension itself.
 
