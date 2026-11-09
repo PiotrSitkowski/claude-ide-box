@@ -374,6 +374,50 @@ else
   ok "another project's files are invisible"
 fi
 
+echo "== read-only .claude"
+in_box "mkdir -p .claude/commands" >/dev/null 2>&1 && not_ok "a .claude directory cannot be created in" || ok "a .claude directory cannot be created in"
+in_box "echo '{\"hooks\":{}}' > .claude/settings.json" >/dev/null 2>&1 && not_ok ".claude/settings.json cannot be written" || ok ".claude/settings.json cannot be written"
+in_box "echo '# notes' >> CLAUDE.md" >/dev/null 2>&1 && ok "CLAUDE.md stays writable" || not_ok "CLAUDE.md stays writable"
+rm -f "$PROJECT/CLAUDE.md"
+
+# What Claude Code does when "always allow" in the panel cannot be saved:
+# drive it like the extension against a fake API (permission-probe.js).
+docker exec -i "$NAME" sh -c 'cat > /tmp/permission-probe.js' <"$REPO_DIR/tests/integration/permission-probe.js"
+probe() {
+  docker exec -w "$PROJECT" "$NAME" node /tmp/permission-probe.js localSettings 2>&1 | tail -n 1
+  rm -f "$PROJECT/permission-probe.txt"
+}
+v="$(probe)"
+printf '      probe: %s\n' "$(printf '%s' "$v" | cut -c1-400)"
+case "$v" in
+  *'"prompts":1,'*'"exit":0,'*'"ranTimes":2,'*'"settingsLocalExists":false'*)
+    ok "read-only .claude: 'always allow' holds for the session, is not saved, and the session goes on" ;;
+  *) not_ok "read-only .claude: 'always allow' holds for the session, is not saved, and the session goes on" "$v" ;;
+esac
+case "$v" in
+  *'"stderr":""'*'"errors":[]'*) ok "read-only .claude: no error is shown for the failed save" ;;
+  *) not_ok "read-only .claude: no error is shown for the failed save" "$v" ;;
+esac
+v="$(probe)"
+case "$v" in
+  *'"prompts":1,'*) ok "read-only .claude: the next session asks again" ;;
+  *) not_ok "read-only .claude: the next session asks again" "$v" ;;
+esac
+# Positive control: with CLAUDE_DIR_WRITABLE=1 the same probe saves the rule.
+CONF="$XDG_CONFIG_HOME/claude-ide-box/projects/$NAME.conf"
+mkdir -p "$(dirname "$CONF")"
+printf 'CLAUDE_DIR_WRITABLE=1\n' >"$CONF"
+(cd "$PROJECT" && "$CLI" up --recreate >/dev/null 2>&1) || not_ok "up --recreate with CLAUDE_DIR_WRITABLE=1"
+docker exec -i "$NAME" sh -c 'cat > /tmp/permission-probe.js' <"$REPO_DIR/tests/integration/permission-probe.js"
+v="$(probe)"
+case "$v" in
+  *'"prompts":1,'*'"settingsLocalExists":true'*) ok "control: with CLAUDE_DIR_WRITABLE=1 the rule is saved to .claude/settings.local.json" ;;
+  *) not_ok "control: with CLAUDE_DIR_WRITABLE=1 the rule is saved" "$v" ;;
+esac
+rm -rf "$PROJECT/.claude/settings.local.json" "$CONF"
+(cd "$PROJECT" && "$CLI" up --recreate >/dev/null 2>&1) || not_ok "up --recreate back to a read-only .claude"
+
+
 echo "== extra: a new secret file causes the container to be recreated with a mask"
 printf 'NEW=1\n' >"$PROJECT/.env.local"
 (cd "$PROJECT" && "$WRAPPER" --version >/dev/null 2>&1) || true
