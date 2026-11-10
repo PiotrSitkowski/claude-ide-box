@@ -37,8 +37,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 182 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 182 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 198 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 198 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
