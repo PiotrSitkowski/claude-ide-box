@@ -706,65 +706,48 @@ cb_toggle_word() {
 }
 
 # --------------------------------------------------------------------------
-# Locking: atomic mkdir with a PID file (no flock on macOS).
+# Locking (no flock on macOS): the lock is a symlink whose target names the
+# holder's pid, created by one `ln -s`. A directory plus a pid file written
+# after it left an instant with no pid, and a holder paused there (a busy or
+# suspended machine) could be taken for one that died and lose its lock.
 # --------------------------------------------------------------------------
 
 CB_HELD_LOCK=""
 
 cb_lock() {
-  local lock="$CB_LOCK_DIR/$1.lock" tries=0 pid empty=0 seen="" inode
+  local lock="$CB_LOCK_DIR/$1.lck" tries=0 owner pid
   mkdir -p "$CB_LOCK_DIR"
-  while ! mkdir "$lock" 2>/dev/null; do
-    pid="$(cat "$lock/pid" 2>/dev/null || true)"
-    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+  while ! ln -s "pid:$$" "$lock" 2>/dev/null; do
+    owner="$(readlink "$lock" 2>/dev/null || true)"
+    pid="${owner#pid:}"
+    if [ -n "$owner" ] && ! kill -0 "$pid" 2>/dev/null; then
       # Only one waiter may reap, and only the lock it judged stale: another
       # waiter may already have reaped it and taken a fresh one.
       if mkdir "$lock.reap" 2>/dev/null; then
-        if [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$pid" ]; then
-          cb_log "removing stale lock $lock (pid $pid is gone)"
-          rm -rf "$lock"
+        if [ "$(readlink "$lock" 2>/dev/null || true)" = "$owner" ]; then
+          cb_log "removing stale lock $lock ($owner is gone)"
+          rm -f "$lock"
         fi
         rmdir "$lock.reap" 2>/dev/null || true
       fi
       continue
     fi
-    if [ -z "$pid" ]; then
-      # Every new holder has no pid file for an instant after its mkdir. Only
-      # the same lock directory (same inode) seen without a pid on more than
-      # 25 polls in a row means its holder died before writing one.
-      inode="$(cb_inode "$lock")"
-      if [ -n "$inode" ] && [ "$inode" = "$seen" ]; then
-        empty=$((empty + 1))
-      else
-        empty=1
-        seen="$inode"
-      fi
-      if [ "$empty" -gt 25 ] && mkdir "$lock.reap" 2>/dev/null; then
-        if [ -z "$(cat "$lock/pid" 2>/dev/null || true)" ] && [ "$(cb_inode "$lock")" = "$seen" ]; then
-          cb_log "removing lock $lock without a pid file"
-          rm -rf "$lock"
-        fi
-        rmdir "$lock.reap" 2>/dev/null || true
-        empty=0
-        continue
-      fi
-    else
-      empty=0
-    fi
     tries=$((tries + 1))
     if [ "$tries" -gt 900 ]; then
-      cb_die "timed out waiting for lock $lock (held by pid ${pid:-unknown})"
+      cb_die "timed out waiting for lock $lock (held by ${owner:-unknown})"
     fi
     sleep 0.2
   done
-  echo "$$" >"$lock/pid"
   CB_HELD_LOCK="$lock"
   trap 'cb_unlock' EXIT
 }
 
 cb_unlock() {
+  # Remove only a lock that is still ours.
   if [ -n "$CB_HELD_LOCK" ]; then
-    rm -rf "$CB_HELD_LOCK"
+    if [ "$(readlink "$CB_HELD_LOCK" 2>/dev/null || true)" = "pid:$$" ]; then
+      rm -f "$CB_HELD_LOCK"
+    fi
     CB_HELD_LOCK=""
   fi
 }

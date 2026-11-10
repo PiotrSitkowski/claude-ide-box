@@ -79,7 +79,7 @@ directory (`~/.vscode-server/...`).
 | Tool | State on macOS 15 | Implication |
 |---|---|---|
 | `/bin/bash` | **3.2.57** | No associative arrays, no `mapfile`/`readarray`, no `${var,,}`, no `[[ -v ]]`, no `wait -n`. Scripts must run on bash 3.2 - do not require Homebrew bash. |
-| `flock` | **absent** | Use an atomic `mkdir` lock with stale-lock detection (PID file), or `perl -e flock` (perl ships with macOS). |
+| `flock` | **absent** | Use an atomic lock with stale-lock detection: a symlink created by `ln -s` whose target names the holder's pid (one step, so a live lock always has its pid), or `perl -e flock` (perl ships with macOS). |
 | `sha256sum` | present (`/sbin/sha256sum`) on macOS 15; older macOS only has `shasum -a 256` | Fall back to `shasum -a 256`, then `openssl dgst -sha256`. |
 | `realpath` | present | `readlink -f` is not on older macOS - prefer `cd -P && pwd -P`. |
 | `timeout` | **absent** | Do not use it, or fall back to `gtimeout`/perl. |
