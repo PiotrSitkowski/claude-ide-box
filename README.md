@@ -294,21 +294,24 @@ on `C:` that you opened with Claude are yours and are not touched.
 
 #### Speed: Projects Claude, and folders on C:
 
-Projects in **Projects Claude** live on WSL's own Linux file system, next to Claude, and are as fast
-as native Windows: a content search over a repository with 14,000 files took 0.2 s there.
+Projects in **Projects Claude** live on WSL's own Linux file system, next to Claude, and are faster
+than the same folder in native Windows: Claude's search over a repository with 14,000 files took
+0.15 s there.
 
 The exception is a folder on `C:` dropped on the **Claude** icon. The box reaches it through WSL's
 file sharing (9p by default), which adds time to every file access. Documents and small projects
 still work well that way; large repositories are noticeably slower. The same 14,000-file
-repository, measured on 2026-11-09:
+repository, measured after a warm-up run (2026-11-09 and 2026-11-10):
 
-| Where the repository is | Search |
-|---|---:|
-| **Projects Claude** (Linux file system in WSL) | 0.2 s |
-| Folder on `C:`, native Windows without the box (ripgrep), for comparison | about 0.5 s |
-| Folder on `C:`, from the box (WSL 9p, the default; Claude Code's own search) | about 9 s |
-| Folder on `C:`, from the box with WSL's experimental virtiofs | 14.6-15.0 s |
+| Where the repository is | `rg -l --hidden TODO .` | Claude Code's Grep tool |
+|---|---:|---:|
+| **Projects Claude** (Linux file system in WSL), from the box | 0.10-0.11 s | 0.15-0.16 s |
+| Folder on `C:`, native Windows without the box, for comparison | 0.49-0.60 s | - |
+| Folder on `C:`, from the box (WSL 9p, the default) | 8.1-8.4 s | 9.0 s |
+| Folder on `C:`, from the box with WSL's experimental virtiofs | 15.0-16.6 s | 14.6-15.0 s |
 
+A large repository that has a remote is best cloned straight into **Projects Claude**
+(`git clone <address>` in that folder) rather than opened from `C:`. Documents stay on `C:`.
 Do not turn on virtiofs: it is experimental and was slower than 9p here.
 
 #### Manual installation in WSL (advanced)
