@@ -23,6 +23,9 @@
     SizeMB = 1360
     Repo = 'https://github.com/PiotrSitkowski/pii-airgap'
     Commit = '5ffdc57e2a08313801f1bb83af54c4174a649f20'
+    # PII_SCAN_MIN_CONFIDENCE for office work and both (the scan before a
+    # project's first session); programming keeps Claude IDE Box's default.
+    ScanMinConfidenceOffice = '0.7'
   }
 
   Dev = @(

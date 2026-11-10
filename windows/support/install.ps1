@@ -485,6 +485,14 @@ if ($choice.Pii) {
 } else {
   $argsUser += @('--pii-commit', 'none')
 }
+# Documents: the personal-data scan before a project's first session also
+# counts findings from 0.7 (names the model is less sure of); programming
+# keeps Claude IDE Box's default (0.8), so guesses in source code do not stop it.
+if ($choice.Purpose -eq 'dev') {
+  $argsUser += @('--pii-min-confidence', 'default')
+} else {
+  $argsUser += @('--pii-min-confidence', $catalog.Pii.ScanMinConfidenceOffice)
+}
 if ((Wsl-Quiet $LinuxUser $argsUser) -ne 0) { Fail (M 'Box_Failed') }
 $wrapper = "/home/$LinuxUser/.local/share/claude-ide-box/bin/claude-ide-box-exec"
 if ((Wsl-Get $LinuxUser @('test', '-x', $wrapper)).Code -ne 0) { Fail "missing $wrapper" }

@@ -8,6 +8,7 @@
 #                     [--preset-on NAME]... [--preset-off NAME]...
 #                     [--vscode-commit SHA --vscode-profile ID]
 #                     [--pii-repo URL --pii-commit SHA | --pii-commit none]
+#                     [--pii-min-confidence VALUE | --pii-min-confidence default]
 #
 #   --src             the claude-ide-box files (on /mnt/c, possibly with CRLF)
 #   --profile         image profiles for all projects ("base" for none)
@@ -23,10 +24,17 @@
 #                     "none" removes what this script installed, unless
 #                     pii-airgap still has recorded copies (Claude IDE Box
 #                     needs its image to check them before every start)
+#   --pii-min-confidence
+#                     PII_SCAN_MIN_CONFIDENCE: the lowest confidence of a
+#                     finding that stops the first start of a project; set
+#                     by the installer for office work, "default" removes it
+#                     (Claude IDE Box's own default applies). Written only when
+#                     the installed Claude IDE Box knows the key: an unknown
+#                     key would stop every start.
 set -euo pipefail
 
 src="" profile="base" ocr="eng" projects="" first="" commit="" vsprofile=""
-presets_on="" presets_off="" pii_repo="" pii_commit=""
+presets_on="" presets_off="" pii_repo="" pii_commit="" pii_min=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --src) src="$2" ;;
@@ -40,6 +48,7 @@ while [ $# -gt 0 ]; do
     --vscode-profile) vsprofile="$2" ;;
     --pii-repo) pii_repo="$2" ;;
     --pii-commit) pii_commit="$2" ;;
+    --pii-min-confidence) pii_min="$2" ;;
     *) echo "provision-user.sh: unknown option $1" >&2; exit 1 ;;
   esac
   shift 2
@@ -79,9 +88,34 @@ set_cfg() {
   printf '%s=%s\n' "$key" "$value" >>"$cfg.tmp"
   mv "$cfg.tmp" "$cfg"
 }
+unset_cfg() {
+  grep -v "^$1=" "$cfg" >"$cfg.tmp" || true
+  mv "$cfg.tmp" "$cfg"
+}
 set_cfg PROFILE "$profile"
 set_cfg OCR_LANGUAGES "$ocr"
 say "profile: $profile; OCR languages: $ocr"
+
+# The minimum confidence of the personal-data scan before a project's first
+# session (documents: 0.7; code keeps the default). Only a Claude IDE Box
+# that knows the key gets it.
+case "$pii_min" in
+  "") ;;
+  default)
+    unset_cfg PII_SCAN_MIN_CONFIDENCE
+    ;;
+  *)
+    printf '%s\n' "$pii_min" | grep -Eq '^(0(\.[0-9]+)?|1(\.0+)?)$' ||
+      { echo "provision-user.sh: invalid --pii-min-confidence '$pii_min'" >&2; exit 1; }
+    if grep -rqw PII_SCAN_MIN_CONFIDENCE "$dest/bin" "$dest/lib"; then
+      set_cfg PII_SCAN_MIN_CONFIDENCE "$pii_min"
+      say "personal-data scan: minimum confidence $pii_min"
+    else
+      unset_cfg PII_SCAN_MIN_CONFIDENCE
+      say "personal-data scan: not in this version of Claude IDE Box; minimum confidence not set"
+    fi
+    ;;
+esac
 
 # 3. Images, networks and the proxy (the slow part: several minutes).
 docker info >/dev/null 2>&1 || { echo "provision-user.sh: Docker is not running" >&2; exit 1; }
