@@ -297,7 +297,7 @@ Info (M 'Choose_WindowOpens')
 $catalog = Import-PowerShellDataFile (Join-Path $PSScriptRoot 'modules.psd1')
 $current = $null
 if ($state.Purpose) {
-  $current = @{ Purpose = $state.Purpose; Office = @($state.Office); Dev = @($state.Dev); Ocr = @($state.Ocr) }
+  $current = @{ Purpose = $state.Purpose; Office = @($state.Office); Dev = @($state.Dev); Ocr = @($state.Ocr); Pii = $state.Pii }
 }
 $choice = Show-Choice $catalog $SrcRoot $current
 if (-not $choice) {
@@ -310,7 +310,9 @@ $profiles = @($choice.Office) + @($choice.Dev)
 $profileList = if ($profiles.Count) { $profiles -join ' ' } else { 'base' }
 $presetsOn = @($catalog.Dev | Where-Object { $choice.Dev -contains $_.Id } | ForEach-Object { $_.Preset })
 $presetsOff = @($catalog.Dev | Where-Object { $choice.Dev -notcontains $_.Id } | ForEach-Object { $_.Preset })
-Ok (M 'Choose_Summary' (M "Purpose_$($choice.Purpose)") $(if ($profiles.Count) { ($profiles | ForEach-Object { M "Module_$_" }) -join ', ' } else { M 'Choose_NothingExtra' }))
+$chosen = @($profiles | ForEach-Object { M "Module_$_" })
+if ($choice.Pii) { $chosen += M 'Module_pii' }
+Ok (M 'Choose_Summary' (M "Purpose_$($choice.Purpose)") $(if ($chosen.Count) { $chosen -join ', ' } else { M 'Choose_NothingExtra' }))
 
 # 3. WSL ---------------------------------------------------------------------
 Step 3 (M 'Step_Wsl')
@@ -325,7 +327,7 @@ if (-not $features['VirtualMachinePlatform'] -or -not $features['Microsoft-Windo
   $rc = Invoke-Elevated 'dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart; $a=$LASTEXITCODE; dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart; $b=$LASTEXITCODE; if (($a -eq 0 -or $a -eq 3010) -and ($b -eq 0 -or $b -eq 3010)) { exit 3010 } else { exit 1 }'
   if ($null -eq $rc) { Fail (M 'Admin_Needed_Features') }
   if ($rc -ne 3010) { Fail (M 'Wsl_FeaturesFailed') }
-  $state.Purpose = $choice.Purpose; $state.Office = $choice.Office; $state.Dev = $choice.Dev; $state.Ocr = $choice.Ocr
+  $state.Purpose = $choice.Purpose; $state.Office = $choice.Office; $state.Dev = $choice.Dev; $state.Ocr = $choice.Ocr; $state.Pii = $choice.Pii
   Save-State $state
   $cmd = Join-Path $LauncherDir 'Install Claude IDE Box.cmd'
   Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name 'ClaudeIDEBox' -Value "`"$cmd`""
@@ -478,6 +480,19 @@ $argsUser = @('bash', (To-LinuxPath $provUser),
   '--vscode-profile', $loc)
 foreach ($p in $presetsOn) { $argsUser += @('--preset-on', $p) }
 foreach ($p in $presetsOff) { $argsUser += @('--preset-off', $p) }
+if ($choice.Pii) {
+  $argsUser += @('--pii-repo', $catalog.Pii.Repo, '--pii-commit', $catalog.Pii.Commit)
+} else {
+  $argsUser += @('--pii-commit', 'none')
+}
+# Documents: the personal-data scan before a project's first session also
+# counts findings from 0.7 (names the model is less sure of); programming
+# keeps Claude IDE Box's default (0.8), so guesses in source code do not stop it.
+if ($choice.Purpose -eq 'dev') {
+  $argsUser += @('--pii-min-confidence', 'default')
+} else {
+  $argsUser += @('--pii-min-confidence', $catalog.Pii.ScanMinConfidenceOffice)
+}
 if ((Wsl-Quiet $LinuxUser $argsUser) -ne 0) { Fail (M 'Box_Failed') }
 $wrapper = "/home/$LinuxUser/.local/share/claude-ide-box/bin/claude-ide-box-exec"
 if ((Wsl-Get $LinuxUser @('test', '-x', $wrapper)).Code -ne 0) { Fail "missing $wrapper" }
@@ -485,6 +500,7 @@ $state.Purpose = $choice.Purpose
 $state.Office = $choice.Office
 $state.Dev = $choice.Dev
 $state.Ocr = $choice.Ocr
+$state.Pii = $choice.Pii
 Save-State $state
 Ok (M 'Box_Ready')
 
