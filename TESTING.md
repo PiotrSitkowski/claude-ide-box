@@ -28,6 +28,7 @@ dependency to install on every runner for no extra coverage.
 | `test_wrapper.sh` | dropping 0, 1 and 2 leading paths; subcommands and `/slash` prompts kept; stdout carries only the container's output; exit status and stdin passed through; container name and sanitisation; identical mount path; hardening flags; masks only for existing files (nested, directories, PrestaShop preset); read-only directories created with normal permissions; `GIT_WRITABLE`; recreate on a new secret file, refusal while a session is active; fail closed without daemon, without docker, without image, for `/`, `$HOME` and its parents; environment passed by name only with deny list and host-path filter; token never on a command line or in the log; host-path flags dropped, inline JSON kept, `..` escapes caught; parallel starts create one container; stale lock removal; a live lock kept however long its holder is paused, and respected until released; a lock directory of an older version does not block; invocation through a guard symlink; unknown config key fails closed; CPU clamping; automatic guard; paths with commas, quotes or newlines refused before `docker run` (mount-option injection); a symlinked secret is masked at the logical path when the project path itself contains a symlink; prompts that contain paths are not dropped; `~`-relative env values are not passed; invalid `MEMORY`/`CPUS`/`TMP_SIZE`/UID settings rejected; an active session is recognised for both `claude` and `claude.exe`; nested `.git` directories and files read-only, a new one triggers recreation; masks found inside `node_modules` and `vendor`; a masked file moved away (renamed parent) or replaced by a decoy stops the start until `up --recreate`; the inode probe survives a path that vanishes under it |
 | `test_cli.sh` | `guard` on both bundled-binary layouts and several versions, idempotence, `--undo`, six concurrent runs keeping the original binary; `allow` validation and proxy reload; presets (`php`, `github` warning, `prestashop` per project); generated allowlist; `setup` (internal network with `inhibit_ipv4`, proxy attached at its fixed IP, UID/GID and version build args, profiles, build failure, no daemon); `up`, `up --recreate`, `down`, `rm`, `rm --volume`, `shell`, `status`, `logs`; `login --token-stdin` (mode 600, rejects garbage); `doctor` (healthy host, `useTerminal: true`, wrapper unset, legacy key, commented-out key, unguarded binary, `claude` running on the host, `claude` on PATH, no daemon, non-internal network, `git.autoRepositoryDetection` warning); modules: profile chains (`env:a.b`), user profiles and presets in `~/.config`, `profile`/`profiles`/`presets` commands, the current project's profiles built by `setup`, an unknown profile failing closed, a profile image with root-owned files in `/home/claude` rejected; `forward`: port validation, a TCP connection relayed through `docker exec ... socat`, loopback-only listener; fixes from the first manual test: `cb_basename`/`cb_dirname` on names starting with `-` (`-zsh`, `-n`, `--`), `doctor` with login shells in `ps`, wrapper set only in an IDE profile (`User/profiles/<id>/settings.json`: ok there, warning elsewhere), `useTerminal` checked in profiles, failure when no file sets the wrapper, unguarded binaries only a warning with `AUTO_GUARD=0`; `login` (in a pseudo-terminal, Linux): the token is stored from the capture directory and never shown, the directory is mounted into a read-only, capability-free container and removed afterwards, pasting is the fallback; the token filter (node) masks tokens split across reads and wrapped in colour codes |
 | `test_pii.sh` | folders recorded by pii-airgap: no record, no check; the case from a manual test (a copy restored in place) refused before any container exists, stdout empty, the files named; a clean copy starts after a check with `--rm`, no network, read-only root, no capabilities, the copy and the map read-only, and the map never reaches the project container; a project inside a copy and a copy inside the project are checked; unrelated and vanished copies are ignored; a missing or replaced map refuses without running the check; a failed check refuses; control characters in file names from the copy never reach the terminal; `up` refuses too; a folder written by `restore --out` is refused with its own message |
+| `test_pii_scan.sh` | personal-data scan before a new project container (a stand-in `pii-airgap` printing its report format): nothing changes without pii-airgap; findings in text, CSV and DOCX refuse the start before `docker run` with files and kinds, never values or absolute paths, and the three ways out; the configured minimum confidence (0.8 by default) is passed on; a clean project starts and an existing container is not scanned again, a new container is; masked files do not count; `PII_SCAN=0`; `pii-scan accept` writes `PII_ACCEPTED=1` outside the project and `reset` undoes it, while `PII_ACCEPTED` in the global config is refused; `pii-scan` shows the report in a terminal; a scan over `PII_SCAN_TIMEOUT` refuses within the limit; a failed scan and a report that cannot be read refuse; `up` is guarded too; control characters in file names never reach the terminal; invalid settings fail closed |
 | `test_engine_versions.sh` | minimum engine versions: thresholds only in the data file, with CVE and source; Docker Desktop 4.44.2 fails, 4.44.3 warns, 4.97.0 and 4.98.0 pass; Docker Engine 25.0.1, 24.0.8, 23.0.6, 20.10.27 fail, 25.0.2, 24.0.9, 26.1.0, 29.9.2 pass; runc 1.1.11 and 1.0.0-rc95 fail, 1.1.12 passes; suffixes (`29.9.2-rd`, `28.0.4+azure-1`, `1.1.12-0ubuntu2~22.04.1`, `v1.1.14`, `(12345)`) and numeric comparison (4.9.0, 4.100.0); an empty, `unknown`, `dev` or `<no value>` engine version, a missing runc and a Docker Desktop without a readable version (also one recognised only by its linuxkit kernel) fail; `setup` refuses before building, warns below 4.97.0; the wrapper refuses with nothing on stdout and no container, `up` too; `ALLOW_VULNERABLE_DOCKER=1` (global only, 0/1) lets setup and the wrapper run while every `doctor` prints `[RISK]` and still fails; no colour codes off a terminal; Podman reported as not checked |
 | `test_install.sh` | install, settings snippet, idempotence, refusing to overwrite foreign files, no sudo, `--uninstall` undoes guard and keeps config, `--prefix` |
 | `test_integration_skip.sh` | the integration suite says SKIPPED without Docker and fails when `CLAUDE_IDE_BOX_REQUIRE_DOCKER=1` |
@@ -36,8 +37,8 @@ dependency to install on every runner for no extra coverage.
 
 | Environment | Result |
 |---|---|
-| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 182 passed, 0 failed |
-| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 182 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
+| Ubuntu 24.04, GNU bash 5.2, GNU coreutils | 198 passed, 0 failed |
+| `bash:3.2` image (bash 3.2.57, musl, busybox userland) | 198 passed, 0 failed (inside passing tests: the `forward` test skips, no perl in that image; the three `login` tests need util-linux `script` for a pseudo-terminal and pass without checking); the first run of the pii-airgap check there caught busybox `tr` mangling `-c '[:print:]'`, which turned file names in the refusal message into question marks |
 | CI: ubuntu-latest, macos-latest with `/bin/bash` 3.2 forced, `bash:3.2` | 123 passed, 0 failed in each (run 22, commit `49e5465`) |
 
 The wrapper and the CLI were written test-first: each stage's tests were committed in the same
@@ -71,6 +72,29 @@ end early on their own: when `head` leaves while `grep` is still writing, `grep`
 (status 141) and `pipefail` with `set -e` stops the test without a message - seen in the
 `bash:3.2` CI job for another test of this kind (4 of 120 runs there, 0 of 300 with `sed -n 1p`).
 The tests here use `sed -n 1p`, which reads all of its input.
+
+The scan before a new project container was written the same way: 11 of its first 15 tests were
+red (the 4 that passed: no pii-airgap changes nothing, two refusals that an unknown key already
+produced, and masked files, which pass while there is no scan). Two more problems were found
+while making them pass, each with a test that was red first:
+
+- the time limit did not free the IDE panel: the wrapper keeps the IDE's stdout on fd 3, the scan
+  left running after the limit inherited it, and the panel waited 20 s for a 1 s limit until the
+  scan was started with fd 3 closed;
+- a file name with a line break split its line of pii-airgap's report, and the part with the
+  finding was skipped as a detail line, so the session started; any line of the report that is not
+  recognised now refuses the start.
+
+The stand-in printed absolute paths, the real pii-airgap prints them relative to the scanned
+folder; a run with the real tool (pii-airgap 0.1.0, image built without a language model)
+showed it, and the stand-in now prints what the tool prints. With that tool, `claude-ide-box
+pii-scan` on a project with a PESEL and a phone number in a text file, names, e-mails and cities
+in a CSV and an IBAN in a DOCX lists the three files with their kinds and refuses (status 3); the
+first scan took 3.1 s, the second 0.66 s from the cache, and a clean project of 200 Python files
+0.66 s; after `pii-airgap mask-add` of the DOCX only the two other files are listed. On this
+repository the scan finds nothing without a language model; with spaCy's model it flags 65 of 69
+files at confidence 0 (names, organisations and places in code and prose) and none at 0.8, while
+the project with personal data is still refused at 0.8 - hence the default of 0.8.
 
 The check of pseudonymised copies came from a manual test in which a copy restored in place was
 opened again and Claude sent a contract with a PESEL to the API. Its tests were red first: 9 of the
@@ -183,6 +207,7 @@ inspection), `CLAUDE_IDE_BOX_IT_BASE_IMAGE`, `CLAUDE_IDE_BOX_IT_PROXY_BASE_IMAGE
 | Docker Desktop (macOS, Windows/WSL2) | no Docker Desktop in CI. The minimum-version check reads the Desktop version from `Platform.Name` of `docker version`, which was not seen on a real Desktop here. Its VM, file sharing, ownership mapping and DNS layer differ from native Linux; in particular `inhibit_ipv4`, `--dns 127.0.0.1` on an internal network and bind-mounting a file over a project path need checking there |
 | Apple Silicon | images are multi-arch by construction (all bases are), not built on arm64 in CI |
 | macOS `ps`, `/bin/bash` 3.2 against real IDE settings paths | unit tests run on macOS but with fake extension and settings directories |
+| The personal-data scan from the IDE panel with the real pii-airgap | the wrapper's refusal is unit-tested with a stand-in that prints pii-airgap's report format, and `claude-ide-box pii-scan` was run with the real tool; a real panel showing the refusal, and spaCy or GLiNER images, were not tried |
 
 ## Manual checklist
 

@@ -300,11 +300,13 @@ CB_CONFIG_KEYS="SUBNET PROXY_IP UPSTREAM_PROXY PROXY_PRESETS PROFILE BUILD_PROFI
 CLAUDE_CODE_VERSION BASE_IMAGE PROXY_BASE_IMAGE BUILD_NETWORK MEMORY CPUS PIDS_LIMIT
 TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS READONLY_DEFAULTS READONLY GIT_WRITABLE
 NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS AUTO_GUARD CONTAINER_UID CONTAINER_GID
-EXTENSION_DIRS OCR_LANGUAGES ALLOW_VULNERABLE_DOCKER"
+EXTENSION_DIRS OCR_LANGUAGES ALLOW_VULNERABLE_DOCKER PII_SCAN PII_SCAN_TIMEOUT
+PII_SCAN_MIN_CONFIDENCE"
 
 # Keys a per-project file may override. Network and build settings are global.
 CB_PROJECT_KEYS="PROFILE MEMORY CPUS PIDS_LIMIT TMP_SIZE MASK_DEFAULTS MASK MASK_PRESETS
-READONLY_DEFAULTS READONLY GIT_WRITABLE NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS"
+READONLY_DEFAULTS READONLY GIT_WRITABLE NONESSENTIAL_TRAFFIC CLAUDEAI_CONNECTORS PII_SCAN
+PII_SCAN_MIN_CONFIDENCE PII_ACCEPTED"
 
 cb_config_defaults() {
   CFG_SUBNET="172.30.99.0/24"
@@ -337,6 +339,12 @@ cb_config_defaults() {
   CFG_EXTENSION_DIRS=""
   # Global only: run on an engine with a known container escape.
   CFG_ALLOW_VULNERABLE_DOCKER="0"
+  # Personal-data scan with pii-airgap before a project container is created
+  # (see pii.sh). PII_ACCEPTED is per project only.
+  CFG_PII_SCAN="1"
+  CFG_PII_SCAN_TIMEOUT="60"
+  CFG_PII_SCAN_MIN_CONFIDENCE="0.8"
+  CFG_PII_ACCEPTED="0"
 }
 
 cb_word_in() {
@@ -421,6 +429,14 @@ cb_validate_config() {
     0 | 1) ;;
     *) cb_die "ALLOW_VULNERABLE_DOCKER must be 0 or 1" ;;
   esac
+  case "$CFG_PII_SCAN$CFG_PII_ACCEPTED" in
+    *[!01]* | ? | "") cb_die "PII_SCAN and PII_ACCEPTED must be 0 or 1" ;;
+  esac
+  case "$CFG_PII_SCAN_TIMEOUT" in
+    *[!0-9]* | "") cb_die "invalid PII_SCAN_TIMEOUT '$CFG_PII_SCAN_TIMEOUT' (seconds, 0 for no limit)" ;;
+  esac
+  printf '%s\n' "$CFG_PII_SCAN_MIN_CONFIDENCE" | grep -Eq '^(0(\.[0-9]+)?|1(\.0+)?)$' ||
+    cb_die "invalid PII_SCAN_MIN_CONFIDENCE '$CFG_PII_SCAN_MIN_CONFIDENCE' (a number from 0 to 1)"
 }
 
 # Set one key in a config file, keeping other lines. No sed -i (BSD/GNU differ).
@@ -1107,6 +1123,8 @@ cb_ensure_container() {
   if [ -z "$state" ]; then
     cb_require_network
     cb_check_mask_record
+    # A new container for this project: look for personal data first.
+    cb_pii_scan_check
     local -a args
     local a prev=""
     args=(run -d --label "io.claude-ide-box.config=$hash")

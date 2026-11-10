@@ -35,6 +35,7 @@ do one of these:
 | change the sandbox configuration | anything under `~/.config/claude-ide-box`, the proxy allowlist |
 | make the wrapper run `claude` on the host | any fail-open path |
 | start in a folder holding restored personal data | a container starting in, above or below a copy or restored folder recorded by pii-airgap whose check reports values of its token map, whose map is missing or replaced, or whose check fails; the map reaching the project container |
+| skip the personal-data scan | with pii-airgap installed and `PII_SCAN=1`, a new project container created without a scan, or despite findings in files that are not masked, a failed scan or one that ran out of time, unless the project is accepted in its config outside the project |
 
 ## Out of scope
 
@@ -44,6 +45,9 @@ do one of these:
 - Data sent to an allowlisted domain. Allowlisted domains are deliberate exits; that includes the
   project content Claude reads, which goes to the Anthropic API. To reduce the personal data in it,
   see [pii-airgap](https://github.com/PiotrSitkowski/pii-airgap).
+- Personal data the scan does not find. What pii-airgap misses, or finds with a confidence below
+  `PII_SCAN_MIN_CONFIDENCE`, does not stop a start; that is a detection limit, reported to
+  pii-airgap as a quality issue, not a way around the scan.
 - Container escapes through kernel or container runtime bugs - report those upstream (Docker,
   runc, containerd, the kernel). Known ones are refused: claude-ide-box will not set up or start a
   container on a Docker Desktop, Docker Engine or runc version listed in
