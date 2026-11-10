@@ -292,22 +292,24 @@ What stays on the computer: WSL itself and the Windows components it turned on, 
 `Claude IDE Box` VS Code profile (remove it in VS Code under File > Preferences > Profiles). Folders
 on `C:` that you opened with Claude are yours and are not touched.
 
-#### Folders on C: are slower
+#### Speed: Projects Claude, and folders on C:
 
-Projects in **Projects Claude** live on the Linux file system and are fast (a content search over
-the repository below took 0.2 s there). A folder on `C:` (dropped
-on the **Claude** icon) is reached through WSL's file sharing (9p by default). Documents and small
-projects work well that way, but large repositories are slow. Measured on one repository with 14,000
-files on `C:` (2026-11-09):
+Projects in **Projects Claude** live on WSL's own Linux file system, next to Claude, and are as fast
+as native Windows: a content search over a repository with 14,000 files took 0.2 s there.
 
-| Claude Code's search (ripgrep) | Time |
+The exception is a folder on `C:` dropped on the **Claude** icon. The box reaches it through WSL's
+file sharing (9p by default), which adds time to every file access. Documents and small projects
+still work well that way; large repositories are noticeably slower. The same 14,000-file
+repository, measured on 2026-11-09:
+
+| Where the repository is | Search |
 |---|---:|
-| Folder on `C:`, from the box (WSL 9p, the default) | about 9 s per search |
-| The same folder, the same search with ripgrep in native Windows, for comparison | about 0.5 s |
-| The same folder, WSL's experimental virtiofs | 14.6-15.0 s |
+| **Projects Claude** (Linux file system in WSL) | 0.2 s |
+| Folder on `C:`, native Windows without the box (ripgrep), for comparison | about 0.5 s |
+| Folder on `C:`, from the box (WSL 9p, the default; Claude Code's own search) | about 9 s |
+| Folder on `C:`, from the box with WSL's experimental virtiofs | 14.6-15.0 s |
 
-Keep large repositories in **Projects Claude**. Do not turn on virtiofs: it is experimental and was
-slower than 9p here.
+Do not turn on virtiofs: it is experimental and was slower than 9p here.
 
 #### Manual installation in WSL (advanced)
 
